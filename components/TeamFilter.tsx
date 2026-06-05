@@ -2,7 +2,7 @@
 
 const MLB_TEAMS = [
   'ARI','ATL','BAL','BOS','CHC','CWS','CIN','CLE','COL','DET',
-  'HOU','KC','LAA','LAD','MIA','MIL','MIN','NYM','NYY','OAK',
+  'HOU','KC','LAA','LAD','MIA','MIL','MIN','NYM','NYY','ATH',
   'PHI','PIT','SD','SF','SEA','STL','TB','TEX','TOR','WSH',
 ]
 
