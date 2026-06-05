@@ -329,21 +329,9 @@ def main():
         all_rows: list[dict] = []
         catcher_info: dict[int, dict] = {}
 
-        # For the current season, only pull the last 16 days to pick up recent games
-        if not season_is_complete(season):
-            today = date.today()
-            lookback_start = today - timedelta(days=16)
-            season_start = date(season, 3, 20)
-            pull_from = max(lookback_start, season_start)
-            chunks = []
-            cur = pull_from
-            while cur <= today:
-                chunk_end = min(cur + timedelta(days=2), today)
-                chunks.append((cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
-                cur = chunk_end + timedelta(days=1)
-            print(f"  Current season — pulling {pull_from} → {today} ({len(chunks)} chunks)")
-        else:
-            chunks = season_date_chunks(season, days=3)
+        # Always pull the full season so cumulative stats are correct
+        chunks = season_date_chunks(season, days=3)
+        print(f"  Pulling full season ({len(chunks)} chunks)")
         for i, (date_from, date_to) in enumerate(chunks):
             print(f"  [{i+1}/{len(chunks)}] {date_from} → {date_to}…", end=" ", flush=True)
             df = fetch_statcast(season, date_from, date_to)
