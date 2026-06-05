@@ -14,6 +14,7 @@ interface Props {
 }
 
 export function MinIpFilter({ value, onChange, season }: Props) {
+  const qualIp = qualifiedIp(season)
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs font-semibold text-[#888] uppercase tracking-widest">Min IP</span>
@@ -25,7 +26,7 @@ export function MinIpFilter({ value, onChange, season }: Props) {
         {BASE_OPTIONS.map(n => (
           <option key={n} value={n}>{n}</option>
         ))}
-        <option value={QUALIFIED_SENTINEL}>Qualified</option>
+        <option value={QUALIFIED_SENTINEL}>Qualified ({qualIp} IP)</option>
       </select>
     </div>
   )
