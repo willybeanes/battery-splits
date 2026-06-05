@@ -23,12 +23,12 @@ SEASONS = [2025, 2026]
 FIP_CONSTANT = 3.15
 
 # Events that record a pitcher out (contribute to IP)
-# Caught stealings are baserunning events — they do NOT count toward pitcher IP
+# Excluded: caught stealings, pickoffs, balks, wild pitches — baserunning/non-batter events
 OUT_EVENTS = {
     "strikeout", "strikeout_double_play",
     "field_out", "force_out", "grounded_into_double_play",
-    "double_play", "triple_play", "sac_fly", "sac_bunt",
-    "fielders_choice_out", "other_out",
+    "double_play", "triple_play", "sac_fly", "sac_fly_double_play",
+    "sac_bunt", "sac_bunt_double_play", "fielders_choice_out", "other_out",
 }
 
 HIT_EVENTS = {"single", "double", "triple", "home_run"}
