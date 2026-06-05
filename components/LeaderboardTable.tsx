@@ -116,6 +116,9 @@ export function LeaderboardTable({
                       <span className="flex items-center gap-1.5">
                         <span className={`transition-transform text-[#bbb] text-[10px] inline-block ${isExpanded ? 'rotate-90' : ''}`}>▶</span>
                         {row.pitcher_name}
+                        {row.catcher_count !== undefined && row.catcher_count > 0 && (
+                          <span className="ml-1.5 text-xs font-normal text-[#aaa]">({row.catcher_count})</span>
+                        )}
                       </span>
                     </td>
                     <td className="px-3 py-2.5 text-left text-xs font-mono text-[#999]">{row.pitcher_team ?? '—'}</td>

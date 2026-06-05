@@ -9,6 +9,7 @@ export interface PitcherRow {
   pitcher_name: string
   pitcher_team: string | null
   catcher_id?: number
+  catcher_count?: number
   bf: number
   ip: number
   era: number | null

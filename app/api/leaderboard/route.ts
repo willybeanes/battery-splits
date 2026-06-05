@@ -6,6 +6,23 @@ const PAGE_SIZE = 50
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+async function getCatcherCountMap(
+  db: ReturnType<typeof createServiceClient>,
+  season: number
+): Promise<Map<number, number>> {
+  const { data } = await db
+    .from('pitcher_catcher_stats')
+    .select('pitcher_id, catcher_id')
+    .eq('season', season)
+    .neq('catcher_id', 0)
+    .limit(10000)
+  const map = new Map<number, number>()
+  for (const r of data ?? []) {
+    map.set(r.pitcher_id, (map.get(r.pitcher_id) ?? 0) + 1)
+  }
+  return map
+}
+
 async function getCatcherMap(
   db: ReturnType<typeof createServiceClient>,
   season: number
@@ -47,9 +64,16 @@ async function handlePitcherTab(
       .gte('ip', minIp)
     if (team) query = query.eq('pitcher_team', team)
     query = query.order(sort, { ascending: dir === 'asc', nullsFirst: false }).range(from, to)
-    const { data, error, count } = await query
+    const [{ data, error, count }, catcherCountMap] = await Promise.all([
+      query,
+      getCatcherCountMap(db, season),
+    ])
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    return NextResponse.json({ rows: data ?? [], total: count ?? 0, page, pageSize: PAGE_SIZE })
+    const rows = (data ?? []).map((r: Record<string, unknown>) => ({
+      ...r,
+      catcher_count: catcherCountMap.get(r.pitcher_id as number) ?? 0,
+    }))
+    return NextResponse.json({ rows, total: count ?? 0, page, pageSize: PAGE_SIZE })
   }
 
   // WAS mode
@@ -61,20 +85,21 @@ async function handlePitcherTab(
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
     const { data: catcherData } = await db.from('catchers').select('name')
       .eq('mlbam_id', catcherId).eq('season', season).single()
-    const sorted = sortRows(wasRows ?? [], sort, dir)
+    const [catcherCountMap] = await Promise.all([getCatcherCountMap(db, season)])
+    const sorted = sortRows(
+      (wasRows ?? []).map((r: Record<string, unknown>) => ({ ...r, catcher_count: catcherCountMap.get(r.pitcher_id as number) ?? 0 })),
+      sort, dir
+    )
     const catcherBf = (wasRows ?? []).reduce((s: number, r: { bf: number }) => s + (r.bf ?? 0), 0)
-    return NextResponse.json({
-      ...paginate(sorted, page),
-      catcherName: catcherData?.name,
-      catcherBf,
-    })
+    return NextResponse.json({ ...paginate(sorted, page), catcherName: catcherData?.name, catcherBf })
   }
 
   // WASN'T mode
   if (mode === 'wasnt') {
-    const [{ data: totals }, { data: wasRows }] = await Promise.all([
+    const [{ data: totals }, { data: wasRows }, catcherCountMap] = await Promise.all([
       db.from('pitcher_catcher_stats').select('*').eq('season', season).eq('catcher_id', 0).gte('bf', minBf),
       db.from('pitcher_catcher_stats').select('*').eq('season', season).eq('catcher_id', catcherId),
+      getCatcherCountMap(db, season),
     ])
     const { data: catcherData } = await db.from('catchers').select('name')
       .eq('mlbam_id', catcherId).eq('season', season).single()
@@ -97,6 +122,7 @@ async function handlePitcherTab(
       rows.push({
         pitcher_id: total.pitcher_id, pitcher_name: total.pitcher_name,
         pitcher_team: total.pitcher_team, bf, ip, hits, hr, bb, so, er, xfip: null,
+        catcher_count: catcherCountMap.get(total.pitcher_id) ?? 0,
         ...deriveRates(hits, bb, so, hr, er, bf, ip),
       })
     }
