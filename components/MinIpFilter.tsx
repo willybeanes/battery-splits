@@ -4,6 +4,9 @@ import { qualifiedIp } from '@/lib/qualified'
 
 const BASE_OPTIONS = [0, 5, 10, 20, 30, 50, 75, 100]
 
+// -1 is the sentinel value meaning "Qualified" (prorated)
+export const QUALIFIED_SENTINEL = -1
+
 interface Props {
   value: number
   onChange: (n: number) => void
@@ -11,8 +14,6 @@ interface Props {
 }
 
 export function MinIpFilter({ value, onChange, season }: Props) {
-  const qualThreshold = qualifiedIp(season)
-
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs font-semibold text-[#888] uppercase tracking-widest">Min IP</span>
@@ -24,7 +25,7 @@ export function MinIpFilter({ value, onChange, season }: Props) {
         {BASE_OPTIONS.map(n => (
           <option key={n} value={n}>{n}</option>
         ))}
-        <option value={qualThreshold}>Qualified ({qualThreshold} IP)</option>
+        <option value={QUALIFIED_SENTINEL}>Qualified</option>
       </select>
     </div>
   )

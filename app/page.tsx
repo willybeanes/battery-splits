@@ -8,8 +8,9 @@ import {
 import { SeasonToggle }    from '@/components/SeasonToggle'
 import { CatcherFilter }   from '@/components/CatcherFilter'
 import { TeamFilter }      from '@/components/TeamFilter'
-import { MinBfFilter }     from '@/components/MinBfFilter'
-import { MinIpFilter }     from '@/components/MinIpFilter'
+import { MinBfFilter }          from '@/components/MinBfFilter'
+import { MinIpFilter, QUALIFIED_SENTINEL } from '@/components/MinIpFilter'
+import { qualifiedIp }          from '@/lib/qualified'
 import { TabNav }          from '@/components/TabNav'
 import { LeaderboardTable } from '@/components/LeaderboardTable'
 import { CatcherTable }    from '@/components/CatcherTable'
@@ -21,8 +22,8 @@ export default function Home() {
   const [tab,     setTab]     = useState<TabName>('pitcher')
   const [season,  setSeason]  = useState<Season>(2026)
   const [team,    setTeam]    = useState('')
-  const [minBf,   setMinBf]   = useState(25)
-  const [minIp,   setMinIp]   = useState(0)
+  const [minBf,   setMinBf]   = useState(0)
+  const [minIp,   setMinIp]   = useState(-1) // -1 = Qualified
   const [catcher, setCatcher] = useState<Catcher | null>(null)
   const [mode,    setMode]    = useState<FilterMode>('all')
   const [sortCol, setSortCol] = useState('fip')
@@ -36,7 +37,8 @@ export default function Home() {
     let alive = true
 
     const params = new URLSearchParams({
-      tab, season: String(season), team, min_bf: String(minBf), min_ip: String(minIp),
+      tab, season: String(season), team, min_bf: String(minBf),
+      min_ip: String(minIp === QUALIFIED_SENTINEL ? qualifiedIp(season) : minIp),
       sort: sortCol, dir: sortDir, page: String(page),
     })
     if (tab === 'pitcher' && catcher) {
@@ -87,7 +89,7 @@ export default function Home() {
   }
 
   function handleSeasonChange(s: Season) {
-    setSeason(s); setCatcher(null); setMode('all'); setMinIp(0); setPage(1)
+    setSeason(s); setCatcher(null); setMode('all'); setMinIp(QUALIFIED_SENTINEL); setPage(1)
   }
 
   function subtitle() {
