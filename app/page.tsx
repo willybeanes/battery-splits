@@ -1,65 +1,199 @@
-import Image from "next/image";
+'use client'
+
+import { useState, useEffect } from 'react'
+import {
+  Season, FilterMode, Catcher, SortDir, TabName,
+  LeaderboardResponse, CatcherLeaderboardResponse, BatteryLeaderboardResponse,
+} from '@/lib/types'
+import { SeasonToggle }    from '@/components/SeasonToggle'
+import { CatcherFilter }   from '@/components/CatcherFilter'
+import { TeamFilter }      from '@/components/TeamFilter'
+import { MinBfFilter }     from '@/components/MinBfFilter'
+import { MinIpFilter }     from '@/components/MinIpFilter'
+import { TabNav }          from '@/components/TabNav'
+import { LeaderboardTable } from '@/components/LeaderboardTable'
+import { CatcherTable }    from '@/components/CatcherTable'
+import { BatteryTable }    from '@/components/BatteryTable'
+
+type AnyResponse = LeaderboardResponse | CatcherLeaderboardResponse | BatteryLeaderboardResponse
 
 export default function Home() {
+  const [tab,     setTab]     = useState<TabName>('pitcher')
+  const [season,  setSeason]  = useState<Season>(2026)
+  const [team,    setTeam]    = useState('')
+  const [minBf,   setMinBf]   = useState(25)
+  const [minIp,   setMinIp]   = useState(0)
+  const [catcher, setCatcher] = useState<Catcher | null>(null)
+  const [mode,    setMode]    = useState<FilterMode>('all')
+  const [sortCol, setSortCol] = useState('fip')
+  const [sortDir, setSortDir] = useState<SortDir>('asc')
+  const [page,    setPage]    = useState(1)
+  const [data,    setData]    = useState<AnyResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error,   setError]   = useState<string | null>(null)
+
+  useEffect(() => {
+    let alive = true
+
+    const params = new URLSearchParams({
+      tab, season: String(season), team, min_bf: String(minBf), min_ip: String(minIp),
+      sort: sortCol, dir: sortDir, page: String(page),
+    })
+    if (tab === 'pitcher' && catcher) {
+      params.set('catcher_id', String(catcher.mlbam_id))
+      params.set('mode', mode)
+    }
+
+    setLoading(true)
+    setData(null)
+
+    fetch(`/api/leaderboard?${params}`)
+      .then(res => res.json())
+      .then(json => {
+        if (!alive) return
+        if (json.error) { setError(json.error); setLoading(false); return }
+        setData(json)
+        setError(null)
+        setLoading(false)
+      })
+      .catch(err => {
+        if (!alive) return
+        setError(String(err))
+        setLoading(false)
+      })
+
+    return () => { alive = false }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, season, team, minBf, minIp, catcher?.mlbam_id, mode, sortCol, sortDir, page])
+
+  // Reset sort + page when tab changes
+  function handleTabChange(t: TabName) {
+    setTab(t)
+    setSortCol('fip')
+    setSortDir('asc')
+    setPage(1)
+    setCatcher(null)
+    setMode('all')
+  }
+
+  function handleSort(col: string) {
+    if (col === sortCol) {
+      setSortDir(d => d === 'asc' ? 'desc' : 'asc')
+    } else {
+      setSortCol(col)
+      setSortDir(['bf', 'ip', 'k_pct'].includes(col) ? 'desc' : 'asc')
+    }
+    setPage(1)
+  }
+
+  function handleSeasonChange(s: Season) {
+    setSeason(s); setCatcher(null); setMode('all'); setMinIp(0); setPage(1)
+  }
+
+  function subtitle() {
+    const base = `${season} Season`
+    if (tab === 'catcher') return `${base} · Pitcher stats by catcher`
+    if (tab === 'battery') return `${base} · All pitcher–catcher combinations`
+    if (!catcher) return `${base} · All Catchers`
+    const bfLabel = (data as LeaderboardResponse)?.catcherBf
+      ? ` (${(data as LeaderboardResponse).catcherBf!.toLocaleString()} BF)` : ''
+    if (mode === 'was')   return `${base} · With ${catcher.name} catching${bfLabel}`
+    if (mode === 'wasnt') return `${base} · Without ${catcher.name} catching${bfLabel}`
+    return base
+  }
+
+  const total = data?.total ?? 0
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
+    <main className="min-h-screen bg-[#edeae4] text-[#1a1a1a]">
+      <div className="max-w-7xl mx-auto px-4 py-10 flex flex-col gap-6">
+
+        {/* Header */}
+        <div>
+          <h1 className="text-3xl font-black tracking-tight text-[#1a1a1a]">Battery Splits</h1>
+          <p className="text-sm text-[#666] mt-1">
+            MLB pitcher leaderboard with catcher presence filter — powered by Baseball Savant Statcast
           </p>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+
+        {/* Main card */}
+        <div className="bg-white border border-[#ddd8d0] rounded-2xl shadow-sm overflow-hidden">
+
+          {/* Tab nav */}
+          <div className="px-5 pt-4">
+            <TabNav value={tab} onChange={handleTabChange} />
+          </div>
+
+          {/* Filter bar */}
+          <div className="px-5 py-4 border-b border-[#ece8e1] flex flex-wrap items-center gap-4">
+            <SeasonToggle value={season} onChange={handleSeasonChange} />
+            <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
+            <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />
+            <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />
+            <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} season={season} />
+            {tab === 'pitcher' && (
+              <>
+                <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
+                <CatcherFilter
+                  season={season}
+                  selectedCatcher={catcher}
+                  mode={mode}
+                  onCatcherChange={c => { setCatcher(c); setPage(1) }}
+                  onModeChange={m => { setMode(m); setPage(1) }}
+                />
+              </>
+            )}
+          </div>
+
+          {/* Table header line */}
+          <div className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
+            <div>
+              <h2 className="text-sm font-bold text-[#1a1a1a]">{subtitle()}</h2>
+              {data && <p className="text-xs text-[#999] mt-0.5">{total.toLocaleString()} {tab === 'catcher' ? 'catchers' : tab === 'battery' ? 'combinations' : 'pitchers'}</p>}
+            </div>
+            {loading && <span className="text-xs text-[#999] animate-pulse">Loading…</span>}
+          </div>
+
+          {error && (
+            <div className="mx-5 mb-4 bg-red-50 border border-red-200 rounded-xl px-4 py-3 text-sm text-red-700">{error}</div>
+          )}
+
+          {/* Tables */}
+          <div className="px-4 pb-5">
+            {tab === 'pitcher' && (
+              <LeaderboardTable
+                rows={(data as LeaderboardResponse)?.rows ?? []}
+                total={total} page={page} pageSize={50}
+                sortCol={sortCol} sortDir={sortDir}
+                onSort={handleSort} onPage={setPage}
+                loading={loading} season={season}
+              />
+            )}
+            {tab === 'catcher' && (
+              <CatcherTable
+                rows={(data as CatcherLeaderboardResponse)?.rows ?? []}
+                total={total} page={page} pageSize={50}
+                sortCol={sortCol} sortDir={sortDir}
+                onSort={handleSort} onPage={setPage}
+                loading={loading}
+              />
+            )}
+            {tab === 'battery' && (
+              <BatteryTable
+                rows={(data as BatteryLeaderboardResponse)?.rows ?? []}
+                total={total} page={page} pageSize={50}
+                sortCol={sortCol} sortDir={sortDir}
+                onSort={handleSort} onPage={setPage}
+                loading={loading}
+              />
+            )}
+          </div>
         </div>
-      </main>
-    </div>
-  );
+
+        <p className="text-xs text-[#aaa] text-center pb-4">
+          Data via Baseball Savant · Updated nightly via GitHub Actions
+        </p>
+      </div>
+    </main>
+  )
 }
