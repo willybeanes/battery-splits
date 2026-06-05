@@ -22,13 +22,13 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 SEASONS = [2025, 2026]
 FIP_CONSTANT = 3.15
 
-# Events that record an out
+# Events that record a pitcher out (contribute to IP)
+# Caught stealings are baserunning events — they do NOT count toward pitcher IP
 OUT_EVENTS = {
     "strikeout", "strikeout_double_play",
     "field_out", "force_out", "grounded_into_double_play",
     "double_play", "triple_play", "sac_fly", "sac_bunt",
-    "fielders_choice_out", "caught_stealing_2b", "caught_stealing_3b",
-    "caught_stealing_home", "other_out",
+    "fielders_choice_out", "other_out",
 }
 
 HIT_EVENTS = {"single", "double", "triple", "home_run"}
