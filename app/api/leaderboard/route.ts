@@ -6,6 +6,19 @@ const PAGE_SIZE = 50
 
 // ── helpers ──────────────────────────────────────────────────────────────────
 
+// Returns set of pitcher_ids who meet the min IP/BF threshold in their TOTALS row
+async function getQualifyingPitcherIds(
+  db: ReturnType<typeof createServiceClient>,
+  season: number, minBf: number, minIp: number, team: string
+): Promise<Set<number>> {
+  let q = db.from('pitcher_catcher_stats').select('pitcher_id')
+    .eq('season', season).eq('catcher_id', 0)
+    .gte('bf', minBf).gte('ip', minIp)
+  if (team) q = q.eq('pitcher_team', team)
+  const { data } = await q.limit(5000)
+  return new Set((data ?? []).map((r: { pitcher_id: number }) => r.pitcher_id))
+}
+
 async function getCatcherCountMap(
   db: ReturnType<typeof createServiceClient>,
   season: number
@@ -78,27 +91,33 @@ async function handlePitcherTab(
 
   // WAS mode
   if (mode === 'was') {
-    let query = db.from('pitcher_catcher_stats').select('*')
-      .eq('season', season).eq('catcher_id', catcherId).gte('bf', minBf).gte('ip', minIp)
-    if (team) query = query.eq('pitcher_team', team)
-    const { data: wasRows, error } = await query
+    const [qualIds, { data: wasRows, error }] = await Promise.all([
+      getQualifyingPitcherIds(db, season, minBf, minIp, team),
+      db.from('pitcher_catcher_stats').select('*')
+        .eq('season', season).eq('catcher_id', catcherId).limit(5000),
+    ])
     if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-    const { data: catcherData } = await db.from('catchers').select('name')
-      .eq('mlbam_id', catcherId).eq('season', season).single()
-    const [catcherCountMap] = await Promise.all([getCatcherCountMap(db, season)])
+    const [{ data: catcherData }, catcherCountMap] = await Promise.all([
+      db.from('catchers').select('name').eq('mlbam_id', catcherId).eq('season', season).single(),
+      getCatcherCountMap(db, season),
+    ])
+    // Filter by pitcher's TOTAL qualifying threshold, not split IP
+    const filtered = (wasRows ?? []).filter((r: { pitcher_id: number }) => qualIds.has(r.pitcher_id))
     const sorted = sortRows(
-      (wasRows ?? []).map((r: Record<string, unknown>) => ({ ...r, catcher_count: catcherCountMap.get(r.pitcher_id as number) ?? 0 })),
+      filtered.map((r: Record<string, unknown>) => ({ ...r, catcher_count: catcherCountMap.get(r.pitcher_id as number) ?? 0 })),
       sort, dir
     )
-    const catcherBf = (wasRows ?? []).reduce((s: number, r: { bf: number }) => s + (r.bf ?? 0), 0)
+    const catcherBf = filtered.reduce((s: number, r: { bf: number }) => s + (r.bf ?? 0), 0)
     return NextResponse.json({ ...paginate(sorted, page), catcherName: catcherData?.name, catcherBf })
   }
 
   // WASN'T mode
   if (mode === 'wasnt') {
     const [{ data: totals }, { data: wasRows }, catcherCountMap] = await Promise.all([
-      db.from('pitcher_catcher_stats').select('*').eq('season', season).eq('catcher_id', 0).gte('bf', minBf),
-      db.from('pitcher_catcher_stats').select('*').eq('season', season).eq('catcher_id', catcherId),
+      // Qualify by total IP/BF — not split
+      db.from('pitcher_catcher_stats').select('*').eq('season', season).eq('catcher_id', 0)
+        .gte('bf', minBf).gte('ip', minIp).limit(5000),
+      db.from('pitcher_catcher_stats').select('*').eq('season', season).eq('catcher_id', catcherId).limit(5000),
       getCatcherCountMap(db, season),
     ])
     const { data: catcherData } = await db.from('catchers').select('name')
@@ -118,7 +137,6 @@ async function handlePitcherTab(
       const er   = total.er   - (was?.er   ?? 0)
       const bf   = total.bf   - (was?.bf   ?? 0)
       const ip   = Math.max(0, Number(total.ip) - Number(was?.ip ?? 0))
-      if (bf < minBf || ip < minIp) continue
       rows.push({
         pitcher_id: total.pitcher_id, pitcher_name: total.pitcher_name,
         pitcher_team: total.pitcher_team, bf, ip, hits, hr, bb, so, er, xfip: null,
@@ -192,15 +210,17 @@ async function handleBatteryTab(
 ) {
   const { season, team, minBf, minIp, sort, dir, page } = params
 
-  const [catcherMap, { data: allRows, error }] = await Promise.all([
+  const [catcherMap, qualIds, { data: allRows, error }] = await Promise.all([
     getCatcherMap(db, season),
+    getQualifyingPitcherIds(db, season, minBf, minIp, team),
     db.from('pitcher_catcher_stats').select('*').eq('season', season)
-      .neq('catcher_id', 0).gte('bf', minBf).gte('ip', minIp).limit(10000),
+      .neq('catcher_id', 0).limit(10000),
   ])
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
   const rows = (allRows ?? [])
     .filter(r => {
+      if (!qualIds.has(r.pitcher_id)) return false  // qualify by pitcher total, not split
       if (team && r.pitcher_team !== team) return false
       return catcherMap.has(r.catcher_id)
     })
