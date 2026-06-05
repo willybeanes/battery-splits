@@ -33,7 +33,7 @@ function SplitRows({ pitcherId, season }: { pitcherId: number; season: number })
   if (loading) {
     return (
       <tr className="bg-[#faf8f5]">
-        <td colSpan={11} className="px-6 py-3 text-xs text-[#aaa]">Loading splits…</td>
+        <td colSpan={10} className="px-6 py-3 text-xs text-[#aaa]">Loading splits…</td>
       </tr>
     )
   }
@@ -41,7 +41,7 @@ function SplitRows({ pitcherId, season }: { pitcherId: number; season: number })
   if (!splits || splits.length === 0) {
     return (
       <tr className="bg-[#faf8f5]">
-        <td colSpan={11} className="px-6 py-3 text-xs text-[#aaa]">No catcher splits available.</td>
+        <td colSpan={10} className="px-6 py-3 text-xs text-[#aaa]">No catcher splits available.</td>
       </tr>
     )
   }
@@ -60,7 +60,6 @@ function SplitRows({ pitcherId, season }: { pitcherId: number; season: number })
           <td className="px-3 py-2 text-right text-xs font-mono text-[#555]">{fmt(s.k_pct, 1)}%</td>
           <td className="px-3 py-2 text-right text-xs font-mono text-[#555]">{fmt(s.bb_pct, 1)}%</td>
           <td className="px-3 py-2 text-right text-xs font-mono"><span className={fipColor(s.fip)}>{fmt(s.fip)}</span></td>
-          <td className="px-3 py-2 text-right text-xs font-mono"><span className={fipColor(s.xfip)}>{fmt(s.xfip)}</span></td>
         </tr>
       ))}
     </>
@@ -94,13 +93,12 @@ export function LeaderboardTable({
               <StatHeader col="k_pct"  label="K%"   sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Strikeout Rate" />
               <StatHeader col="bb_pct" label="BB%"  sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Walk Rate" />
               <StatHeader col="fip"    label="FIP"  sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Fielding Independent Pitching" />
-              <StatHeader col="xfip"   label="xFIP" sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Expected FIP" />
             </tr>
           </thead>
           <tbody className={loading ? 'opacity-50' : ''}>
             {rows.length === 0 && !loading && (
               <tr>
-                <td colSpan={11} className="px-4 py-12 text-center text-[#aaa] text-sm">
+                <td colSpan={10} className="px-4 py-12 text-center text-[#aaa] text-sm">
                   No data available for this filter.
                 </td>
               </tr>
@@ -129,9 +127,6 @@ export function LeaderboardTable({
                     <td className="px-3 py-2.5 text-right font-mono text-sm text-[#333]">{fmt(row.bb_pct, 1)}%</td>
                     <td className="px-3 py-2.5 text-right font-mono text-sm">
                       <span className={fipColor(row.fip)}>{fmt(row.fip)}</span>
-                    </td>
-                    <td className="px-3 py-2.5 text-right font-mono text-sm">
-                      <span className={fipColor(row.xfip)}>{fmt(row.xfip)}</span>
                     </td>
                   </tr>
                   {isExpanded && <SplitRows pitcherId={row.pitcher_id} season={season} />}
