@@ -30,16 +30,24 @@ export function sortRows<T>(rows: T[], col: string, dir: string): T[] {
   })
 }
 
+// Convert baseball IP notation to true decimal for rate calculations
+function ipToDecimal(ip: number): number {
+  const innings = Math.floor(ip)
+  const fraction = Math.round((ip - innings) * 10)
+  return (innings * 3 + fraction) / 3
+}
+
 export function deriveRates(
   hits: number, bb: number, so: number, hr: number, er: number, bf: number, ip: number
 ) {
   const FIP_CONST = 3.15
+  const ipDec = ipToDecimal(ip)  // convert baseball notation to true decimal
   const safeDiv = (n: number, d: number) => d ? n / d : null
   return {
-    era: safeDiv(er * 9, ip),
-    whip: safeDiv(hits + bb, ip),
+    era: safeDiv(er * 9, ipDec),
+    whip: safeDiv(hits + bb, ipDec),
     k_pct: safeDiv(so * 100, bf),
     bb_pct: safeDiv(bb * 100, bf),
-    fip: ip ? (13 * hr + 3 * bb - 2 * so) / ip + FIP_CONST : null,
+    fip: ipDec ? (13 * hr + 3 * bb - 2 * so) / ipDec + FIP_CONST : null,
   }
 }

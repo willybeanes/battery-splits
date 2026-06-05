@@ -125,6 +125,24 @@ def safe_rate(num, denom):
     return round(result, 3)
 
 
+def outs_to_ip(outs: int) -> float:
+    """Convert raw out count to baseball IP notation (e.g. 17 outs → 5.2)."""
+    return int(outs // 3) + (outs % 3) / 10
+
+
+def ip_to_outs(ip: float) -> int:
+    """Convert baseball IP notation back to raw out count (e.g. 5.2 → 17)."""
+    ip = ip or 0
+    innings = int(ip)
+    fraction = round((ip - innings) * 10)
+    return innings * 3 + fraction
+
+
+def ip_to_decimal(ip: float) -> float:
+    """Convert baseball IP notation to true decimal for rate calculations (5.2 → 5.667)."""
+    return ip_to_outs(ip) / 3
+
+
 def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
     """Aggregate pitch-level data to pitcher+catcher+season rows."""
     required = {"pitcher", "fielder_2", "at_bat_number", "events", "game_pk"}
@@ -170,7 +188,9 @@ def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
                 outs += 1
             if ev in ("grounded_into_double_play", "strikeout_double_play"):
                 outs += 1  # extra out for double plays
-        ip = round(outs / 3, 1)
+        # Store in baseball notation (e.g. 17 outs → 5.2, not 5.7)
+        ip = outs_to_ip(outs)
+        ip_dec = outs / 3  # true decimal for rate calculations
 
         hits = int((events.isin(HIT_EVENTS)).sum())
         hr = int((events == "home_run").sum())
@@ -184,22 +204,13 @@ def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
                           pd.to_numeric(group["bat_score"], errors="coerce")
             er = int(score_delta.clip(lower=0).sum())
 
-        era = safe_rate(er * 9, ip)
-        whip = safe_rate(hits + bb, ip)
+        era = safe_rate(er * 9, ip_dec)
+        whip = safe_rate(hits + bb, ip_dec)
         k_pct = safe_rate(so * 100, bf)
         bb_pct = safe_rate(bb * 100, bf)
-        fip = round((13 * hr + 3 * bb - 2 * so) / ip + FIP_CONSTANT, 3) if ip else None
+        fip = round((13 * hr + 3 * bb - 2 * so) / ip_dec + FIP_CONSTANT, 3) if ip_dec else None
 
-        # xFIP: estimate HR using xwOBA-derived fly ball HR rate
         xfip = None
-        if "estimated_woba_using_speedangle" in group.columns and ip:
-            xwoba_vals = pd.to_numeric(group["estimated_woba_using_speedangle"], errors="coerce").dropna()
-            if len(xwoba_vals):
-                # Crude proxy: expected HR ≈ total BF * league HR/BF rate scaled by xwOBA
-                league_hr_rate = 0.032
-                avg_xwoba = xwoba_vals.mean()
-                expected_hr = bf * league_hr_rate * (avg_xwoba / 0.320) if avg_xwoba > 0 else bf * league_hr_rate
-                xfip = round((13 * expected_hr + 3 * bb - 2 * so) / ip + FIP_CONSTANT, 3)
 
         rows.append({
             "season": season,
@@ -226,27 +237,32 @@ def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
 
 def merge_rows(existing: list[dict], new_rows: list[dict]) -> list[dict]:
     """Merge rows by (pitcher_id, catcher_id), summing counting stats and re-deriving rates."""
+    # Track outs separately to avoid baseball IP notation arithmetic errors
+    outs_index: dict[tuple, int] = {}
     index: dict[tuple, dict] = {}
     for row in existing + new_rows:
         key = (row["pitcher_id"], row["catcher_id"], row["season"])
         if key not in index:
-            index[key] = {**row, "bf": 0, "ip": 0.0, "hits": 0, "hr": 0, "bb": 0, "so": 0, "er": 0}
+            index[key] = {**row, "bf": 0, "hits": 0, "hr": 0, "bb": 0, "so": 0, "er": 0}
+            outs_index[key] = 0
         r = index[key]
         for col in ("bf", "hits", "hr", "bb", "so", "er"):
             r[col] += row.get(col, 0) or 0
-        r["ip"] = round((r["ip"] or 0) + (row.get("ip") or 0), 1)
+        outs_index[key] += ip_to_outs(row.get("ip") or 0)
         r["pitcher_name"] = row["pitcher_name"]
         r["pitcher_team"] = row.get("pitcher_team")
 
     result = []
-    for r in index.values():
-        ip = r["ip"]
+    for key, r in index.items():
+        outs = outs_index[key]
+        r["ip"] = outs_to_ip(outs)
+        ip_dec = outs / 3
         bf = r["bf"]
-        r["era"] = safe_rate(r["er"] * 9, ip)
-        r["whip"] = safe_rate(r["hits"] + r["bb"], ip)
+        r["era"] = safe_rate(r["er"] * 9, ip_dec)
+        r["whip"] = safe_rate(r["hits"] + r["bb"], ip_dec)
         r["k_pct"] = safe_rate(r["so"] * 100, bf)
         r["bb_pct"] = safe_rate(r["bb"] * 100, bf)
-        r["fip"] = round((13 * r["hr"] + 3 * r["bb"] - 2 * r["so"]) / ip + FIP_CONSTANT, 3) if ip else None
+        r["fip"] = round((13 * r["hr"] + 3 * r["bb"] - 2 * r["so"]) / ip_dec + FIP_CONSTANT, 3) if ip_dec else None
         result.append(r)
     return result
 
@@ -254,31 +270,33 @@ def merge_rows(existing: list[dict], new_rows: list[dict]) -> list[dict]:
 def build_totals(rows: list[dict]) -> list[dict]:
     """Build catcher_id=0 aggregate rows for each pitcher+season."""
     totals: dict[tuple, dict] = {}
+    outs_index: dict[tuple, int] = {}
     for row in rows:
         if row["catcher_id"] == 0:
             continue
         key = (row["pitcher_id"], row["season"])
         if key not in totals:
             totals[key] = {
-                **row,
-                "catcher_id": 0,
-                "bf": 0, "ip": 0.0, "hits": 0, "hr": 0, "bb": 0, "so": 0, "er": 0,
-                "xfip": None,
+                **row, "catcher_id": 0,
+                "bf": 0, "hits": 0, "hr": 0, "bb": 0, "so": 0, "er": 0, "xfip": None,
             }
+            outs_index[key] = 0
         t = totals[key]
         for col in ("bf", "hits", "hr", "bb", "so", "er"):
             t[col] += row.get(col, 0) or 0
-        t["ip"] = round((t["ip"] or 0) + (row.get("ip") or 0), 1)
+        outs_index[key] += ip_to_outs(row.get("ip") or 0)
 
     result = []
-    for t in totals.values():
-        ip = t["ip"]
+    for key, t in totals.items():
+        outs = outs_index[key]
+        t["ip"] = outs_to_ip(outs)
+        ip_dec = outs / 3
         bf = t["bf"]
-        t["era"] = safe_rate(t["er"] * 9, ip)
-        t["whip"] = safe_rate(t["hits"] + t["bb"], ip)
+        t["era"] = safe_rate(t["er"] * 9, ip_dec)
+        t["whip"] = safe_rate(t["hits"] + t["bb"], ip_dec)
         t["k_pct"] = safe_rate(t["so"] * 100, bf)
         t["bb_pct"] = safe_rate(t["bb"] * 100, bf)
-        t["fip"] = round((13 * t["hr"] + 3 * t["bb"] - 2 * t["so"]) / ip + FIP_CONSTANT, 3) if ip else None
+        t["fip"] = round((13 * t["hr"] + 3 * t["bb"] - 2 * t["so"]) / ip_dec + FIP_CONSTANT, 3) if ip_dec else None
         result.append(t)
     return result
 

@@ -4,6 +4,16 @@ import { sortRows, deriveRates } from '@/lib/stats'
 
 const PAGE_SIZE = 50
 
+// Baseball IP notation helpers (5.2 = 5⅔ innings = 17 outs)
+function ipToOuts(ip: number): number {
+  const innings = Math.floor(ip)
+  const fraction = Math.round((ip - innings) * 10)
+  return innings * 3 + fraction
+}
+function outsToIp(outs: number): number {
+  return Math.floor(outs / 3) + (outs % 3) / 10
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────────
 
 // Returns set of pitcher_ids who meet the min IP/BF threshold in their TOTALS row
@@ -136,7 +146,7 @@ async function handlePitcherTab(
       const so   = total.so   - (was?.so   ?? 0)
       const er   = total.er   - (was?.er   ?? 0)
       const bf   = total.bf   - (was?.bf   ?? 0)
-      const ip   = Math.max(0, Number(total.ip) - Number(was?.ip ?? 0))
+      const ip   = outsToIp(Math.max(0, ipToOuts(Number(total.ip)) - ipToOuts(Number(was?.ip ?? 0))))
       rows.push({
         pitcher_id: total.pitcher_id, pitcher_name: total.pitcher_name,
         pitcher_team: total.pitcher_team, bf, ip, hits, hr, bb, so, er, xfip: null,
