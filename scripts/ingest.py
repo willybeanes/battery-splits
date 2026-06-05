@@ -294,16 +294,46 @@ def upsert_catchers(db: Client, catcher_records: list[dict]):
     print(f"  Upserted {len(catcher_records)} catcher records")
 
 
+COMPLETED_SEASONS = [2025]  # seasons that are over — skip if data already exists
+
+def season_is_complete(season: int) -> bool:
+    end = date(season, 10, 5)
+    return date.today() > end
+
+def has_existing_data(db: Client, season: int) -> bool:
+    result = db.table("pitcher_catcher_stats").select("id").eq("season", season).limit(1).execute()
+    return len(result.data) > 0
+
 def main():
     db = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     name_cache: dict[int, str] = {}
 
     for season in SEASONS:
         print(f"\n=== Season {season} ===")
+
+        # Skip completed seasons if we already have data
+        if season_is_complete(season) and has_existing_data(db, season):
+            print(f"  Season {season} is complete and data exists — skipping.")
+            continue
+
         all_rows: list[dict] = []
         catcher_info: dict[int, dict] = {}
 
-        chunks = season_date_chunks(season, days=3)
+        # For the current season, only pull the last 16 days to pick up recent games
+        if not season_is_complete(season):
+            today = date.today()
+            lookback_start = today - timedelta(days=16)
+            season_start = date(season, 3, 20)
+            pull_from = max(lookback_start, season_start)
+            chunks = []
+            cur = pull_from
+            while cur <= today:
+                chunk_end = min(cur + timedelta(days=2), today)
+                chunks.append((cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
+                cur = chunk_end + timedelta(days=1)
+            print(f"  Current season — pulling {pull_from} → {today} ({len(chunks)} chunks)")
+        else:
+            chunks = season_date_chunks(season, days=3)
         for i, (date_from, date_to) in enumerate(chunks):
             print(f"  [{i+1}/{len(chunks)}] {date_from} → {date_to}…", end=" ", flush=True)
             df = fetch_statcast(season, date_from, date_to)
