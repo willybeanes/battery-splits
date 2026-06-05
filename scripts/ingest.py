@@ -149,7 +149,17 @@ def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
     rows = []
     for (pitcher_id, catcher_id), group in pa_df.groupby(["pitcher", "fielder_2"]):
         pitcher_name = group["pitcher_name"].iloc[0] if "pitcher_name" in group.columns else str(pitcher_id)
-        pitcher_team = group["home_team"].iloc[0] if "home_team" in group.columns else None
+        # Determine pitcher's actual team: home pitchers pitch in "Bot" innings, away in "Top"
+        if "inning_topbot" in group.columns and "home_team" in group.columns and "away_team" in group.columns:
+            row0 = group.iloc[0]
+            if str(row0.get("inning_topbot", "")).strip().lower() == "bot":
+                pitcher_team = row0["away_team"]
+            else:
+                pitcher_team = row0["home_team"]
+        elif "home_team" in group.columns:
+            pitcher_team = group["home_team"].iloc[0]
+        else:
+            pitcher_team = None
 
         events = group["events"].str.lower()
         bf = len(group)
