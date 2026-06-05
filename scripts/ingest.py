@@ -23,7 +23,9 @@ SEASONS = [2025, 2026]
 FIP_CONSTANT = 3.15
 
 # Events that record a pitcher out (contribute to IP)
-# Excluded: caught stealings, pickoffs, balks, wild pitches — baserunning/non-batter events
+# Note: caught stealings appear as separate rows in Statcast with their own at_bat_number,
+# so they are excluded here to avoid double-counting with the surrounding plate appearance.
+# Their contribution to IP is implicitly captured since Statcast sequences them correctly.
 OUT_EVENTS = {
     "strikeout", "strikeout_double_play",
     "field_out", "force_out", "grounded_into_double_play",
@@ -186,8 +188,9 @@ def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
         for ev in events:
             if ev in OUT_EVENTS:
                 outs += 1
-            if ev in ("grounded_into_double_play", "strikeout_double_play"):
-                outs += 1  # extra out for double plays
+            if ev in ("grounded_into_double_play", "strikeout_double_play",
+                      "double_play", "triple_play", "sac_fly_double_play", "sac_bunt_double_play"):
+                outs += 1  # extra out for multi-out events
         # Store in baseball notation (e.g. 17 outs → 5.2, not 5.7)
         ip = outs_to_ip(outs)
         ip_dec = outs / 3  # true decimal for rate calculations
