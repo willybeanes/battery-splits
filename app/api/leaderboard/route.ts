@@ -4,6 +4,30 @@ import { sortRows, deriveRates } from '@/lib/stats'
 
 const PAGE_SIZE = 50
 
+// ── CSV helpers ───────────────────────────────────────────────────────────────
+
+function escapeCsv(val: unknown): string {
+  if (val === null || val === undefined) return ''
+  const s = String(val)
+  if (s.includes(',') || s.includes('"') || s.includes('\n')) return `"${s.replace(/"/g, '""')}"`
+  return s
+}
+
+function toCsv(headers: string[], rows: Record<string, unknown>[]): string {
+  const lines = [headers.join(',')]
+  for (const row of rows) lines.push(headers.map(h => escapeCsv(row[h])).join(','))
+  return lines.join('\n')
+}
+
+function csvResponse(csv: string, filename: string) {
+  return new Response(csv, {
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+  })
+}
+
 // Baseball IP notation helpers (5.2 = 5⅔ innings = 17 outs)
 function ipToOuts(ip: number): number {
   const innings = Math.floor(ip)
@@ -69,12 +93,14 @@ async function handlePitcherTab(
   params: {
     season: number; team: string; minBf: number; minIp: number
     catcherId: number | null; mode: string
-    sort: string; dir: string; page: number
+    sort: string; dir: string; page: number; exportCsv: boolean
   }
 ) {
-  const { season, team, minBf, minIp, catcherId, mode, sort, dir, page } = params
+  const { season, team, minBf, minIp, catcherId, mode, sort, dir, page, exportCsv } = params
   const from = (page - 1) * PAGE_SIZE
   const to = from + PAGE_SIZE - 1
+
+  const PITCHER_CSV_COLS = ['pitcher_id', 'pitcher_name', 'pitcher_team', 'bf', 'ip', 'era', 'whip', 'k_pct', 'bb_pct', 'fip', 'hits', 'hr', 'bb', 'so', 'er']
 
   // No catcher filter — server-side sort+page on totals rows
   if (!catcherId || mode === 'all') {
@@ -86,7 +112,8 @@ async function handlePitcherTab(
       .gte('bf', minBf)
       .gte('ip', minIp)
     if (team) query = query.eq('pitcher_team', team)
-    query = query.order(sort, { ascending: dir === 'asc', nullsFirst: false }).range(from, to)
+    query = query.order(sort, { ascending: dir === 'asc', nullsFirst: false })
+    if (!exportCsv) query = (query as typeof query).range(from, to)
     const [{ data, error, count }, catcherCountMap] = await Promise.all([
       query,
       getCatcherCountMap(db, season),
@@ -96,6 +123,7 @@ async function handlePitcherTab(
       ...r,
       catcher_count: catcherCountMap.get(r.pitcher_id as number) ?? 0,
     }))
+    if (exportCsv) return csvResponse(toCsv(PITCHER_CSV_COLS, rows), `battery-splits-pitchers-${season}.csv`)
     return NextResponse.json({ rows, total: count ?? 0, page, pageSize: PAGE_SIZE })
   }
 
@@ -118,6 +146,7 @@ async function handlePitcherTab(
       sort, dir
     )
     const catcherBf = filtered.reduce((s: number, r: { bf: number }) => s + (r.bf ?? 0), 0)
+    if (exportCsv) return csvResponse(toCsv(PITCHER_CSV_COLS, sorted), `battery-splits-pitchers-with-catcher-${season}.csv`)
     return NextResponse.json({ ...paginate(sorted, page), catcherName: catcherData?.name, catcherBf })
   }
 
@@ -156,6 +185,7 @@ async function handlePitcherTab(
     }
     const catcherBf = (wasRows ?? []).reduce((s: number, r: { bf: number }) => s + (r.bf ?? 0), 0)
     const sorted = sortRows(rows, sort, dir)
+    if (exportCsv) return csvResponse(toCsv(PITCHER_CSV_COLS, sorted), `battery-splits-pitchers-without-catcher-${season}.csv`)
     return NextResponse.json({ ...paginate(sorted, page), catcherName: catcherData?.name, catcherBf })
   }
 
@@ -166,9 +196,9 @@ async function handlePitcherTab(
 
 async function handleCatcherTab(
   db: ReturnType<typeof createServiceClient>,
-  params: { season: number; team: string; minBf: number; minIp: number; sort: string; dir: string; page: number }
+  params: { season: number; team: string; minBf: number; minIp: number; sort: string; dir: string; page: number; exportCsv: boolean }
 ) {
-  const { season, team, minBf, minIp, sort, dir, page } = params
+  const { season, team, minBf, minIp, sort, dir, page, exportCsv } = params
 
   const [catcherMap, { data: allRows, error }] = await Promise.all([
     getCatcherMap(db, season),
@@ -209,6 +239,8 @@ async function handleCatcherTab(
     .map(r => ({ ...r, ...deriveRates(r.hits, r.bb, r.so, r.hr, r.er, r.bf, r.ip) }))
 
   const sorted = sortRows(rows, sort, dir)
+  const CATCHER_CSV_COLS = ['catcher_id', 'catcher_name', 'catcher_team', 'bf', 'ip', 'era', 'whip', 'k_pct', 'bb_pct', 'fip', 'hits', 'hr', 'bb', 'so', 'er']
+  if (exportCsv) return csvResponse(toCsv(CATCHER_CSV_COLS, sorted as unknown as Record<string, unknown>[]), `battery-splits-catchers-${season}.csv`)
   return NextResponse.json(paginate(sorted, page))
 }
 
@@ -216,9 +248,9 @@ async function handleCatcherTab(
 
 async function handleBatteryTab(
   db: ReturnType<typeof createServiceClient>,
-  params: { season: number; team: string; minBf: number; minIp: number; sort: string; dir: string; page: number }
+  params: { season: number; team: string; minBf: number; minIp: number; sort: string; dir: string; page: number; exportCsv: boolean }
 ) {
-  const { season, team, minBf, minIp, sort, dir, page } = params
+  const { season, team, minBf, minIp, sort, dir, page, exportCsv } = params
 
   const [catcherMap, qualIds, { data: allRows, error }] = await Promise.all([
     getCatcherMap(db, season),
@@ -247,6 +279,8 @@ async function handleBatteryTab(
     })
 
   const sorted = sortRows(rows, sort, dir)
+  const BATTERY_CSV_COLS = ['pitcher_id', 'pitcher_name', 'pitcher_team', 'catcher_id', 'catcher_name', 'catcher_team', 'bf', 'ip', 'era', 'whip', 'k_pct', 'bb_pct', 'fip', 'hits', 'hr', 'bb', 'so', 'er']
+  if (exportCsv) return csvResponse(toCsv(BATTERY_CSV_COLS, sorted as unknown as Record<string, unknown>[]), `battery-splits-battery-${season}.csv`)
   return NextResponse.json(paginate(sorted, page))
 }
 
@@ -265,12 +299,13 @@ export async function GET(req: NextRequest) {
   const sort   = searchParams.get('sort') ?? 'fip'
   const dir    = (searchParams.get('dir') ?? 'asc') as 'asc' | 'desc'
   const page   = Math.max(1, parseInt(searchParams.get('page') ?? '1'))
+  const exportCsv = searchParams.get('export') === '1'
 
   const db = createServiceClient()
 
-  if (tab === 'pitcher') return handlePitcherTab(db, { season, team, minBf, minIp, catcherId, mode, sort, dir, page })
-  if (tab === 'catcher') return handleCatcherTab(db, { season, team, minBf, minIp, sort, dir, page })
-  if (tab === 'battery') return handleBatteryTab(db, { season, team, minBf, minIp, sort, dir, page })
+  if (tab === 'pitcher') return handlePitcherTab(db, { season, team, minBf, minIp, catcherId, mode, sort, dir, page, exportCsv })
+  if (tab === 'catcher') return handleCatcherTab(db, { season, team, minBf, minIp, sort, dir, page, exportCsv })
+  if (tab === 'battery') return handleBatteryTab(db, { season, team, minBf, minIp, sort, dir, page, exportCsv })
 
   return NextResponse.json({ error: 'Invalid tab' }, { status: 400 })
 }

@@ -106,6 +106,19 @@ export default function Home() {
 
   const total = data?.total ?? 0
 
+  function buildExportUrl() {
+    const params = new URLSearchParams({
+      tab, season: String(season), team, min_bf: String(minBf),
+      min_ip: String(minIp === QUALIFIED_SENTINEL ? qualifiedIp(season) : minIp),
+      sort: sortCol, dir: sortDir, page: '1', export: '1',
+    })
+    if (tab === 'pitcher' && catcher) {
+      params.set('catcher_id', String(catcher.mlbam_id))
+      params.set('mode', mode)
+    }
+    return `/api/leaderboard?${params}`
+  }
+
   return (
     <main className="min-h-screen bg-[#edeae4] text-[#1a1a1a]">
       <div className="max-w-7xl mx-auto px-4 py-10 flex flex-col gap-6">
@@ -153,7 +166,18 @@ export default function Home() {
               <h2 className="text-sm font-bold text-[#1a1a1a]">{subtitle()}</h2>
               {data && <p className="text-xs text-[#999] mt-0.5">{total.toLocaleString()} {tab === 'catcher' ? 'catchers' : tab === 'battery' ? 'combinations' : 'pitchers'}</p>}
             </div>
-            {loading && <span className="text-xs text-[#999] animate-pulse">Loading…</span>}
+            <div className="flex items-center gap-3">
+              {loading && <span className="text-xs text-[#999] animate-pulse">Loading…</span>}
+              {data && !loading && (
+                <a
+                  href={buildExportUrl()}
+                  download
+                  className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg bg-white border border-[#d0cbc3] text-[#555] hover:text-[#1a1a1a] hover:border-[#aaa] transition-colors"
+                >
+                  ↓ Export CSV
+                </a>
+              )}
+            </div>
           </div>
 
           {error && (
