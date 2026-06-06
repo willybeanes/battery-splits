@@ -360,17 +360,26 @@ def has_existing_data(db: Client, season: int) -> bool:
     result = db.table("pitcher_catcher_stats").select("id").eq("season", season).limit(1).execute()
     return len(result.data) > 0
 
-def main():
+def main(force_seasons: list[int] | None = None):
+    """
+    force_seasons: list of season years to re-ingest even if they're complete.
+    e.g. python3 scripts/ingest.py --force 2025
+    """
     db = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
     name_cache: dict[int, str] = {}
 
     for season in SEASONS:
         print(f"\n=== Season {season} ===")
 
-        # Skip completed seasons if we already have data
-        if season_is_complete(season) and has_existing_data(db, season):
-            print(f"  Season {season} is complete and data exists — skipping.")
+        # Skip completed seasons if we already have data (unless forced)
+        forced = force_seasons and season in force_seasons
+        if not forced and season_is_complete(season) and has_existing_data(db, season):
+            print(f"  Season {season} is complete and data exists — skipping. (use --force {season} to re-run)")
             continue
+        if forced:
+            print(f"  Force flag set — deleting existing {season} data and re-ingesting from scratch.")
+            db.table("pitcher_catcher_stats").delete().eq("season", season).execute()
+            db.table("catchers").delete().eq("season", season).execute()
 
         all_rows: list[dict] = []
         catcher_info: dict[int, dict] = {}
@@ -433,4 +442,13 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    import sys
+    force = []
+    args = sys.argv[1:]
+    if "--force" in args:
+        idx = args.index("--force")
+        # Collect all year arguments after --force
+        for a in args[idx + 1:]:
+            if a.isdigit():
+                force.append(int(a))
+    main(force_seasons=force if force else None)
