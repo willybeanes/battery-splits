@@ -19,7 +19,7 @@ load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env.loca
 SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ["NEXT_PUBLIC_SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 
-SEASONS = [2025, 2026]
+SEASONS = [2024, 2025, 2026]
 FIP_CONSTANT = 3.15
 
 # All valid plate-appearance terminal events (batter completes an AB)
@@ -350,7 +350,7 @@ def upsert_catchers(db: Client, catcher_records: list[dict]):
     print(f"  Upserted {len(catcher_records)} catcher records")
 
 
-COMPLETED_SEASONS = [2025]  # seasons that are over — skip if data already exists
+COMPLETED_SEASONS = [2024, 2025]  # seasons that are over — skip if data already exists
 
 def season_is_complete(season: int) -> bool:
     end = date(season, 10, 5)

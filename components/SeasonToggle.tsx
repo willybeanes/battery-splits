@@ -12,7 +12,7 @@ export function SeasonToggle({ value, onChange }: Props) {
     <div className="flex items-center gap-2">
       <span className="text-xs font-semibold text-[#888] uppercase tracking-widest">Season</span>
       <div className="flex rounded-lg overflow-hidden border border-[#d0cbc3]">
-        {([2026, 2025] as Season[]).map((s) => (
+        {([2026, 2025, 2024] as Season[]).map((s) => (
           <button
             key={s}
             onClick={() => onChange(s)}

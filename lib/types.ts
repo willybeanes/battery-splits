@@ -1,4 +1,4 @@
-export type Season = 2025 | 2026
+export type Season = 2024 | 2025 | 2026
 export type FilterMode = 'all' | 'was' | 'wasnt'
 export type TabName = 'pitcher' | 'catcher' | 'battery'
 export type SortDir = 'asc' | 'desc'

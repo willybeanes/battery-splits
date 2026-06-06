@@ -6,6 +6,7 @@
  */
 
 const SEASON_DATES: Record<number, { start: string; end: string }> = {
+  2024: { start: '2024-03-20', end: '2024-09-29' },
   2025: { start: '2025-03-20', end: '2025-09-28' },
   2026: { start: '2026-03-26', end: '2026-09-27' },
 }
