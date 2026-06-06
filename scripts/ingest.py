@@ -22,16 +22,37 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 SEASONS = [2025, 2026]
 FIP_CONSTANT = 3.15
 
-# Events that record a pitcher out (contribute to IP)
-# Note: caught stealings appear as separate rows in Statcast with their own at_bat_number,
-# so they are excluded here to avoid double-counting with the surrounding plate appearance.
-# Their contribution to IP is implicitly captured since Statcast sequences them correctly.
+# All valid plate-appearance terminal events (batter completes an AB)
+# Excludes: caught_stealing, stolen_base, pickoff, wild_pitch, passed_ball, balk, etc.
+PA_TERMINAL_EVENTS = {
+    "single", "double", "triple", "home_run",
+    "strikeout", "strikeout_double_play",
+    "field_out", "force_out", "grounded_into_double_play",
+    "double_play", "triple_play",
+    "sac_fly", "sac_fly_double_play",
+    "sac_bunt", "sac_bunt_double_play",
+    "fielders_choice", "fielders_choice_out",
+    "walk", "intent_walk", "hit_by_pitch",
+    "catcher_interf", "fan_interference",
+    "other_out",
+}
+
+# Subset of PA_TERMINAL_EVENTS that record a pitcher out
 OUT_EVENTS = {
     "strikeout", "strikeout_double_play",
     "field_out", "force_out", "grounded_into_double_play",
-    "double_play", "triple_play", "sac_fly", "sac_fly_double_play",
-    "sac_bunt", "sac_bunt_double_play", "fielders_choice_out", "other_out",
+    "double_play", "triple_play",
+    "sac_fly", "sac_fly_double_play",
+    "sac_bunt", "sac_bunt_double_play",
+    "fielders_choice_out", "other_out",
 }
+
+# Multi-out events (add an extra out beyond the base 1)
+MULTI_OUT_EVENTS = {
+    "grounded_into_double_play", "strikeout_double_play",
+    "double_play", "sac_fly_double_play", "sac_bunt_double_play",
+}
+TRIPLE_OUT_EVENTS = {"triple_play"}
 
 HIT_EVENTS = {"single", "double", "triple", "home_run"}
 WALK_EVENTS = {"walk", "intent_walk"}
@@ -162,9 +183,12 @@ def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
     df["events"] = df["events"].fillna("")
 
     # One row per plate appearance (last pitch of each AB)
+    # Then filter to only legitimate PA-ending events to exclude baserunning rows
+    # (caught stealings, pickoffs, etc. that appear as separate rows in Statcast)
     pa_df = df.sort_values("pitch_number").groupby(
         ["pitcher", "at_bat_number", "game_pk"], as_index=False
     ).last()
+    pa_df = pa_df[pa_df["events"].str.lower().isin(PA_TERMINAL_EVENTS)]
 
     rows = []
     for (pitcher_id, catcher_id), group in pa_df.groupby(["pitcher", "fielder_2"]):
@@ -188,9 +212,10 @@ def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
         for ev in events:
             if ev in OUT_EVENTS:
                 outs += 1
-            if ev in ("grounded_into_double_play", "strikeout_double_play",
-                      "double_play", "triple_play", "sac_fly_double_play", "sac_bunt_double_play"):
-                outs += 1  # extra out for multi-out events
+                if ev in MULTI_OUT_EVENTS:
+                    outs += 1   # double play: 2 outs total
+                elif ev in TRIPLE_OUT_EVENTS:
+                    outs += 2   # triple play: 3 outs total
         # Store in baseball notation (e.g. 17 outs → 5.2, not 5.7)
         ip = outs_to_ip(outs)
         ip_dec = outs / 3  # true decimal for rate calculations
