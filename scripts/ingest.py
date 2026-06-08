@@ -208,14 +208,11 @@ def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
         events = group["events"].str.lower()
         bf = len(group)
 
-        outs = 0
-        for ev in events:
-            if ev in OUT_EVENTS:
-                outs += 1
-                if ev in MULTI_OUT_EVENTS:
-                    outs += 1   # double play: 2 outs total
-                elif ev in TRIPLE_OUT_EVENTS:
-                    outs += 2   # triple play: 3 outs total
+        # Count 1 out per out-event PA. MULTI_OUT_EVENTS (DPs, triple plays) are NOT
+        # given extra credit here — doing so overcounts IP vs official stats.
+        # The outs_when_up delta approach also overcounts due to CS/pickoffs between PAs.
+        # Best available approximation: 1 out per batter retired.
+        outs = int((events.isin(OUT_EVENTS)).sum())
         # Store in baseball notation (e.g. 17 outs → 5.2, not 5.7)
         ip = outs_to_ip(outs)
         ip_dec = outs / 3  # true decimal for rate calculations
