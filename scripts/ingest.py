@@ -1,451 +1,755 @@
 """
-Battery Splits — Statcast ingest script.
+Battery Splits — unified ingest script.
 
-Pulls pitch-level data from Baseball Savant, aggregates per pitcher+catcher+season,
-and upserts into Supabase.
+Backends
+--------
+  Retrosheet  (2000–2025): official play-by-play event files.
+               Outs are counted from official event codes → IP matches
+               Baseball Reference exactly.
+  MLB Stats API (2026+):   real-time official play-by-play.
+               Catcher tracked via defensive-switch events.
+
+Usage
+-----
+  python3 scripts/ingest.py                        # all seasons
+  python3 scripts/ingest.py --force 2024 2025      # re-ingest specific seasons
+  python3 scripts/ingest.py --season 2026          # single season only
 """
 
-import os
+import csv
 import io
-import time
+import json
 import math
+import os
+import re
+import sys
+import time
+import zipfile
+from collections import defaultdict
+from datetime import date
+from pathlib import Path
+
 import requests
-import pandas as pd
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env.local'))
+# ── Config ────────────────────────────────────────────────────────────────────
 
-SUPABASE_URL = os.environ.get("SUPABASE_URL") or os.environ["NEXT_PUBLIC_SUPABASE_URL"]
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env.local")
+
+SUPABASE_URL         = os.environ.get("SUPABASE_URL") or os.environ["NEXT_PUBLIC_SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 
-SEASONS = [2024, 2025, 2026]
+RETROSHEET_SEASONS   = list(range(2000, 2026))   # 2000–2025  (official Retrosheet data)
+MLBAPI_SEASONS       = [2026]                     # 2026+      (MLB Stats API)
+ALL_SEASONS          = RETROSHEET_SEASONS + MLBAPI_SEASONS
+
+# Seasons whose data is complete; skip re-ingest unless --force is passed.
+COMPLETED_SEASONS    = set(range(2000, 2026))     # all Retrosheet seasons are complete
+
 FIP_CONSTANT = 3.15
+CACHE_DIR    = Path(__file__).parent / "cache"
+CACHE_DIR.mkdir(exist_ok=True)
 
-# All valid plate-appearance terminal events (batter completes an AB)
-# Excludes: caught_stealing, stolen_base, pickoff, wild_pitch, passed_ball, balk, etc.
-PA_TERMINAL_EVENTS = {
-    "single", "double", "triple", "home_run",
-    "strikeout", "strikeout_double_play",
-    "field_out", "force_out", "grounded_into_double_play",
-    "double_play", "triple_play",
-    "sac_fly", "sac_fly_double_play",
-    "sac_bunt", "sac_bunt_double_play",
-    "fielders_choice", "fielders_choice_out",
-    "walk", "intent_walk", "hit_by_pitch",
-    "catcher_interf", "fan_interference",
-    "other_out",
+# ── Retrosheet team-code → standard abbreviation ─────────────────────────────
+
+RETRO_TEAM = {
+    "ANA": "LAA", "LAA": "LAA", "CAL": "LAA",
+    "ARI": "ARI", "ATL": "ATL",
+    "BAL": "BAL", "BOS": "BOS",
+    "CHA": "CWS", "CHN": "CHC",
+    "CIN": "CIN", "CLE": "CLE",
+    "COL": "COL", "DET": "DET",
+    "FLO": "MIA", "MIA": "MIA",
+    "HOU": "HOU", "KCA": "KC",
+    "LAN": "LAD", "MIL": "MIL",
+    "MIN": "MIN", "MON": "MON",
+    "NYA": "NYY", "NYN": "NYM",
+    "OAK": "OAK", "ATH": "ATH",
+    "PHI": "PHI", "PIT": "PIT",
+    "SDN": "SD",  "SEA": "SEA",
+    "SFN": "SF",  "SLN": "STL",
+    "TBA": "TB",  "TEX": "TEX",
+    "TOR": "TOR", "WAS": "WSH",
 }
 
-# Subset of PA_TERMINAL_EVENTS that record a pitcher out
-OUT_EVENTS = {
-    "strikeout", "strikeout_double_play",
-    "field_out", "force_out", "grounded_into_double_play",
-    "double_play", "triple_play",
-    "sac_fly", "sac_fly_double_play",
-    "sac_bunt", "sac_bunt_double_play",
-    "fielders_choice_out", "other_out",
-}
-
-# Multi-out events (add an extra out beyond the base 1)
-MULTI_OUT_EVENTS = {
-    "grounded_into_double_play", "strikeout_double_play",
-    "double_play", "sac_fly_double_play", "sac_bunt_double_play",
-}
-TRIPLE_OUT_EVENTS = {"triple_play"}
-
-HIT_EVENTS = {"single", "double", "triple", "home_run"}
-WALK_EVENTS = {"walk", "intent_walk"}
-K_EVENTS = {"strikeout", "strikeout_double_play"}
-
-# Baseball Savant chunks by team to avoid timeout on large pulls
-MLB_TEAMS = [
-    "ARI","ATL","BAL","BOS","CHC","CWS","CIN","CLE","COL","DET",
-    "HOU","KC","LAA","LAD","MIA","MIL","MIN","NYM","NYY","OAK",
-    "PHI","PIT","SD","SF","SEA","STL","TB","TEX","TOR","WSH",
-]
-
-
-from datetime import date, timedelta
-
-def season_date_chunks(season: int, days: int = 14) -> list[tuple[str, str]]:
-    """Return (date_from, date_to) pairs covering the season in chunks."""
-    start = date(season, 3, 20)
-    end = date(season, 10, 5)
-    # Don't go past today
-    today = date.today()
-    if end > today:
-        end = today
-    chunks = []
-    cur = start
-    while cur <= end:
-        chunk_end = min(cur + timedelta(days=days - 1), end)
-        chunks.append((cur.strftime("%Y-%m-%d"), chunk_end.strftime("%Y-%m-%d")))
-        cur = chunk_end + timedelta(days=1)
-    return chunks
-
-
-def fetch_statcast(season: int, date_from: str, date_to: str) -> pd.DataFrame | None:
-    url = (
-        "https://baseballsavant.mlb.com/statcast_search/csv"
-        f"?all=true&type=details&player_type=pitcher"
-        f"&game_date_gt={date_from}&game_date_lt={date_to}"
-        "&min_pitches=0&sort_col=pitches&sort_order=desc"
-    )
-    for attempt in range(3):
-        try:
-            resp = requests.get(url, timeout=180)
-            resp.raise_for_status()
-            content = resp.text.strip()
-            if not content or content.startswith("<!"):
-                return None
-            df = pd.read_csv(io.StringIO(content), low_memory=False)
-            if df.empty or "pitcher" not in df.columns:
-                return None
-            if len(df) >= 24900:
-                print(f"\n  WARNING: {date_from}→{date_to} hit row cap ({len(df)} rows) — shrink chunk size!")
-            return df
-        except Exception as e:
-            print(f"  Attempt {attempt+1} failed for {date_from}→{date_to}: {e}")
-            time.sleep(5 * (attempt + 1))
-    return None
-
-
-def get_catcher_name(mlbam_id: int, cache: dict) -> str:
-    if mlbam_id in cache:
-        return cache[mlbam_id]
-    try:
-        resp = requests.get(
-            f"https://statsapi.mlb.com/api/v1/people/{mlbam_id}?fields=people,fullName",
-            timeout=10,
-        )
-        data = resp.json()
-        name = data["people"][0]["fullName"]
-    except Exception:
-        name = f"Player {mlbam_id}"
-    cache[mlbam_id] = name
-    return name
-
-
-def count_outs(events: pd.Series) -> int:
-    total = 0
-    for ev in events.dropna():
-        ev = str(ev).lower()
-        if ev in OUT_EVENTS:
-            total += 1
-        elif ev == "grounded_into_double_play" or ev == "strikeout_double_play":
-            total += 2  # already counted above via set; correct for DP
-    # Re-count properly: each PA event counts as 1 out if in set, grounded_into_double_play = 2
-    return total
-
-
-def safe_rate(num, denom):
-    if not denom or math.isnan(denom) or denom == 0:
-        return None
-    result = num / denom
-    if math.isnan(result) or math.isinf(result):
-        return None
-    return round(result, 3)
-
+# ── Math helpers ──────────────────────────────────────────────────────────────
 
 def outs_to_ip(outs: int) -> float:
-    """Convert raw out count to baseball IP notation (e.g. 17 outs → 5.2)."""
+    """17 outs → 5.2  (baseball notation, not decimal)."""
     return int(outs // 3) + (outs % 3) / 10
 
-
 def ip_to_outs(ip: float) -> int:
-    """Convert baseball IP notation back to raw out count (e.g. 5.2 → 17)."""
+    """5.2 → 17."""
     ip = ip or 0
-    innings = int(ip)
-    fraction = round((ip - innings) * 10)
-    return innings * 3 + fraction
+    whole = int(ip)
+    frac  = round((ip - whole) * 10)
+    return whole * 3 + frac
 
+def safe_rate(num, denom):
+    if not denom or denom == 0:
+        return None
+    v = num / denom
+    return None if (math.isnan(v) or math.isinf(v)) else round(v, 3)
 
-def ip_to_decimal(ip: float) -> float:
-    """Convert baseball IP notation to true decimal for rate calculations (5.2 → 5.667)."""
-    return ip_to_outs(ip) / 3
+def compute_rates(s: dict) -> dict:
+    """Fill ip/era/whip/k_pct/bb_pct/fip from counting stats."""
+    outs   = s["outs"]
+    ip_dec = outs / 3
+    bf     = s["bf"]
+    s["ip"]     = outs_to_ip(outs)
+    s["era"]    = safe_rate(s["er"]  * 9, ip_dec)
+    s["whip"]   = safe_rate((s["hits"] + s["bb"]), ip_dec)
+    s["k_pct"]  = safe_rate(s["so"]  * 100, bf)
+    s["bb_pct"] = safe_rate(s["bb"]  * 100, bf)
+    s["fip"]    = (
+        round((13 * s["hr"] + 3 * s["bb"] - 2 * s["so"]) / ip_dec + FIP_CONSTANT, 3)
+        if ip_dec else None
+    )
+    return s
 
+# ── Chadwick register  (Retrosheet ID → MLBAM ID) ────────────────────────────
 
-def aggregate(df: pd.DataFrame, season: int) -> list[dict]:
-    """Aggregate pitch-level data to pitcher+catcher+season rows."""
-    required = {"pitcher", "fielder_2", "at_bat_number", "events", "game_pk"}
-    if not required.issubset(df.columns):
-        missing = required - set(df.columns)
-        print(f"  Missing columns: {missing}")
-        return []
+_CHADWICK_FILES = [f"people-{x}.csv" for x in "0123456789abcdef"]
 
-    df = df.copy()
-    # Normalize pitcher name column (Savant uses "player_name" not "pitcher_name")
-    if "player_name" in df.columns and "pitcher_name" not in df.columns:
-        df["pitcher_name"] = df["player_name"]
-    df["fielder_2"] = pd.to_numeric(df["fielder_2"], errors="coerce").fillna(0).astype(int)
-    df["pitcher"] = pd.to_numeric(df["pitcher"], errors="coerce").dropna().astype(int)
-    df["events"] = df["events"].fillna("")
+def load_chadwick_register() -> dict[str, int]:
+    """Download all Chadwick register shards and return {retro_id: mlbam_id}."""
+    cache = CACHE_DIR / "chadwick_register.json"
+    if cache.exists():
+        with open(cache) as f:
+            return json.load(f)
 
-    # One row per plate appearance (last pitch of each AB)
-    # Then filter to only legitimate PA-ending events to exclude baserunning rows
-    # (caught stealings, pickoffs, etc. that appear as separate rows in Statcast)
-    pa_df = df.sort_values("pitch_number").groupby(
-        ["pitcher", "at_bat_number", "game_pk"], as_index=False
-    ).last()
-    pa_df = pa_df[pa_df["events"].str.lower().isin(PA_TERMINAL_EVENTS)]
+    print("  Downloading Chadwick register…", flush=True)
+    mapping: dict[str, int] = {}
+    base = "https://raw.githubusercontent.com/chadwickbureau/register/master/data/"
+    for fname in _CHADWICK_FILES:
+        try:
+            resp = requests.get(base + fname, timeout=60)
+            resp.raise_for_status()
+            reader = csv.DictReader(io.StringIO(resp.text))
+            for row in reader:
+                retro = (row.get("key_retro") or "").strip()
+                mlbam = (row.get("key_mlbam") or "").strip()
+                if retro and mlbam:
+                    try:
+                        mapping[retro] = int(mlbam)
+                    except ValueError:
+                        pass
+        except Exception as e:
+            print(f"    Warning: could not fetch {fname}: {e}")
+
+    with open(cache, "w") as f:
+        json.dump(mapping, f)
+    print(f"  Chadwick: {len(mapping):,} retro→mlbam mappings cached.")
+    return mapping
+
+# ── Retrosheet event-code parser ─────────────────────────────────────────────
+
+def parse_retro_event(raw: str) -> dict:
+    """
+    Parse a Retrosheet event code string.
+
+    Returns:
+      is_batter_pa  bool  – False for CS, PO, SB, WP, BK, NP, etc.
+      outs          int   – outs recorded on this play (0–3)
+      hits          int   – 0 or 1
+      hr            int   – 0 or 1
+      bb            int   – 0 or 1 (walk or intentional walk)
+      hbp           int   – 0 or 1
+      so            int   – 0 or 1
+      runs          int   – runs scored on the play (from advances field)
+    """
+    r = {"is_batter_pa": True, "outs": 0, "hits": 0, "hr": 0,
+         "bb": 0, "hbp": 0, "so": 0, "runs": 0}
+
+    code = raw.strip()
+
+    # ── split BASIC/MODIFIERS.ADVANCES ────────────────────────────────────
+    advances = ""
+    if "." in code:
+        dot = code.index(".")
+        advances = code[dot + 1:]
+        code = code[:dot]
+
+    modifiers = ""
+    if "/" in code:
+        sl = code.index("/")
+        modifiers = code[sl + 1:].upper()
+        code = code[:sl]
+
+    # Compound events: BASIC+SECONDARY  (e.g. K+WP, S8+WP, E3+WP)
+    primary   = code.split("+")[0]
+    secondary = code.split("+")[1].upper() if "+" in code else ""
+    b = primary.upper()
+
+    # ── count runs from advances  (e.g. "2-H" = runner scores) ───────────
+    for adv in advances.split(";"):
+        adv_clean = re.sub(r"\([^)]*\)", "", adv.strip())
+        # Safe score: something-H without X (e.g. "2-H", "B-H")
+        adv_up = adv_clean.upper()
+        if adv_up.endswith("H") and "X" not in adv_up:
+            r["runs"] += 1
+
+    # ── non-batter-PA events ──────────────────────────────────────────────
+    for prefix in ("WP", "PB", "BK", "NP", "DI", "OA"):
+        if b.startswith(prefix):
+            r["is_batter_pa"] = False
+            return r
+
+    if b.startswith("SB"):
+        r["is_batter_pa"] = False
+        return r
+
+    # Caught stealing / pickoff-caught-stealing
+    if b.startswith("POCS") or b.startswith("CS"):
+        r["is_batter_pa"] = False
+        if "(E" not in b:          # no error → runner is out
+            r["outs"] = 1
+        return r
+
+    # Pickoff (not POCS, already handled)
+    if b.startswith("PO"):
+        r["is_batter_pa"] = False
+        if "(E" not in b:
+            r["outs"] = 1
+        return r
+
+    # ── batter PA events ──────────────────────────────────────────────────
+
+    if b == "K":
+        r["so"] = 1
+        # K+WP, K+PB, K+E → dropped third strike, batter reaches
+        if secondary.startswith(("WP", "PB", "E")):
+            r["outs"] = 0
+        else:
+            r["outs"] = 1
+
+    elif b.startswith("IW"):
+        r["bb"] = 1
+
+    elif b == "W":
+        r["bb"] = 1
+
+    elif b.startswith("HP"):
+        r["hbp"] = 1
+
+    elif b in ("C", "CI", "CF", "FI"):        # catcher/fan interference
+        pass                                   # batter reaches, no primary stat
+
+    elif b.startswith("E"):                   # error (batter reaches)
+        pass
+
+    elif b.startswith("FC"):                  # fielder's choice (batter safe, runner out)
+        if "E" not in modifiers:
+            r["outs"] = 1
+
+    elif b[0] == "S":                         # single  (S, S7, S8, S9…)
+        r["hits"] = 1
+
+    elif b[0] == "D" and not b.startswith("DI"):  # double
+        r["hits"] = 1
+
+    elif b[0] == "T":                         # triple (T, T7…)
+        r["hits"] = 1
+
+    elif b.startswith("HR") or (b[0] == "H" and not b.startswith("HP")):  # home run
+        r["hits"] = 1
+        r["hr"]   = 1
+
+    else:
+        # Default: fielded out (digit sequences: 63, 8, 543, etc.)
+        r["outs"] = 1
+
+    # ── modifier adjustments ──────────────────────────────────────────────
+    if "TP" in modifiers:
+        r["outs"] += 2                  # triple play  → total 3
+    elif "DP" in modifiers or "GDP" in modifiers:
+        r["outs"] += 1                  # double play  → total 2
+
+    return r
+
+# ── Retrosheet season ingest ──────────────────────────────────────────────────
+
+def download_retrosheet(season: int) -> Path:
+    path = CACHE_DIR / f"retro_{season}eve.zip"
+    if path.exists():
+        return path
+    url = f"https://www.retrosheet.org/events/{season}eve.zip"
+    print(f"  Downloading Retrosheet {season}…", end=" ", flush=True)
+    resp = requests.get(url, timeout=120,
+                        headers={"User-Agent": "battery-splits-ingest/1.0"})
+    resp.raise_for_status()
+    path.write_bytes(resp.content)
+    print(f"{len(resp.content) // 1024} KB")
+    return path
+
+def parse_retrosheet_season(season: int, zip_path: Path, id_map: dict) -> tuple[list, dict]:
+    """
+    Parse all EV files for a season.
+    Returns (raw_pa_list, {mlbam_id: name}).
+    """
+    pas: list[dict]    = []
+    names: dict[int, str] = {}
+
+    with zipfile.ZipFile(zip_path) as zf:
+        ev_files = sorted(
+            f for f in zf.namelist()
+            if f.upper().endswith((".EVA", ".EVN", ".EV"))
+        )
+
+        for ev_file in ev_files:
+            with zf.open(ev_file) as raw:
+                lines = raw.read().decode("latin-1").splitlines()
+
+            vis_team  = None
+            home_team = None
+            # lineup[team_idx][position] = retro_id  (team 0=visitor, 1=home)
+            lineup: dict[int, dict[int, str]] = {0: {}, 1: {}}
+
+            for line in lines:
+                line = line.strip()
+                if not line:
+                    continue
+
+                rec   = line.split(",", 6)
+                rtype = rec[0].lower()
+
+                if rtype == "id":
+                    vis_team  = None
+                    home_team = None
+                    lineup    = {0: {}, 1: {}}
+
+                elif rtype == "info":
+                    if len(rec) < 3:
+                        continue
+                    key, val = rec[1].lower(), rec[2]
+                    if key == "visteam":
+                        vis_team  = RETRO_TEAM.get(val, val)
+                    elif key == "hometeam":
+                        home_team = RETRO_TEAM.get(val, val)
+
+                elif rtype in ("start", "sub"):
+                    if len(rec) < 6:
+                        continue
+                    retro_id = rec[1]
+                    name     = rec[2].strip('"')
+                    team_idx = int(rec[3])
+                    position = int(rec[5])
+                    lineup[team_idx][position] = retro_id
+
+                    mlbam = id_map.get(retro_id)
+                    if mlbam and mlbam not in names:
+                        names[mlbam] = name
+
+                elif rtype == "play":
+                    if len(rec) < 7:
+                        continue
+                    batting_team  = int(rec[2])
+                    event_code    = rec[6].strip()
+                    fielding_team = 1 - batting_team
+
+                    pitcher_retro = lineup[fielding_team].get(1)
+                    catcher_retro = lineup[fielding_team].get(2)
+
+                    if not pitcher_retro or not catcher_retro:
+                        continue
+
+                    pitcher_mlbam = id_map.get(pitcher_retro)
+                    catcher_mlbam = id_map.get(catcher_retro)
+
+                    if not pitcher_mlbam or not catcher_mlbam:
+                        continue
+
+                    ev     = parse_retro_event(event_code)
+                    p_team = home_team if fielding_team == 1 else vis_team
+
+                    pas.append({
+                        "season":       season,
+                        "pitcher_id":   pitcher_mlbam,
+                        "catcher_id":   catcher_mlbam,
+                        "pitcher_team": p_team,
+                        **ev,
+                    })
+
+    return pas, names
+
+def aggregate_pas(pas: list[dict]) -> list[dict]:
+    """Roll raw PA list into pitcher-catcher-season stat rows."""
+    index: dict[tuple, dict] = {}
+
+    for p in pas:
+        key = (p["season"], p["pitcher_id"], p["catcher_id"])
+        if key not in index:
+            index[key] = {
+                "season":       p["season"],
+                "pitcher_id":   p["pitcher_id"],
+                "catcher_id":   p["catcher_id"],
+                "pitcher_team": p.get("pitcher_team"),
+                "bf": 0, "outs": 0, "hits": 0, "hr": 0,
+                "bb": 0, "so": 0, "er": 0,
+            }
+        s = index[key]
+        if p.get("is_batter_pa"):
+            s["bf"]   += 1
+            s["hits"] += p.get("hits", 0)
+            s["hr"]   += p.get("hr",   0)
+            s["bb"]   += p.get("bb",   0) + p.get("hbp", 0)
+            s["so"]   += p.get("so",   0)
+        s["outs"] += p.get("outs", 0)
+        s["er"]   += p.get("runs", 0)   # runs allowed as ER proxy
 
     rows = []
-    for (pitcher_id, catcher_id), group in pa_df.groupby(["pitcher", "fielder_2"]):
-        pitcher_name = group["pitcher_name"].iloc[0] if "pitcher_name" in group.columns else str(pitcher_id)
-        # Determine pitcher's actual team: home pitchers pitch in "Bot" innings, away in "Top"
-        if "inning_topbot" in group.columns and "home_team" in group.columns and "away_team" in group.columns:
-            row0 = group.iloc[0]
-            if str(row0.get("inning_topbot", "")).strip().lower() == "bot":
-                pitcher_team = row0["away_team"]
-            else:
-                pitcher_team = row0["home_team"]
-        elif "home_team" in group.columns:
-            pitcher_team = group["home_team"].iloc[0]
-        else:
-            pitcher_team = None
-
-        events = group["events"].str.lower()
-        bf = len(group)
-
-        # Count 1 out per out-event PA. MULTI_OUT_EVENTS (DPs, triple plays) are NOT
-        # given extra credit here — doing so overcounts IP vs official stats.
-        # The outs_when_up delta approach also overcounts due to CS/pickoffs between PAs.
-        # Best available approximation: 1 out per batter retired.
-        outs = int((events.isin(OUT_EVENTS)).sum())
-        # Store in baseball notation (e.g. 17 outs → 5.2, not 5.7)
-        ip = outs_to_ip(outs)
-        ip_dec = outs / 3  # true decimal for rate calculations
-
-        hits = int((events.isin(HIT_EVENTS)).sum())
-        hr = int((events == "home_run").sum())
-        bb = int((events.isin(WALK_EVENTS)).sum())
-        so = int((events.isin(K_EVENTS)).sum())
-
-        # Earned runs: use post_bat_score delta when available
-        er = 0
-        if "post_bat_score" in group.columns and "bat_score" in group.columns:
-            score_delta = pd.to_numeric(group["post_bat_score"], errors="coerce") - \
-                          pd.to_numeric(group["bat_score"], errors="coerce")
-            er = int(score_delta.clip(lower=0).sum())
-
-        era = safe_rate(er * 9, ip_dec)
-        whip = safe_rate(hits + bb, ip_dec)
-        k_pct = safe_rate(so * 100, bf)
-        bb_pct = safe_rate(bb * 100, bf)
-        fip = round((13 * hr + 3 * bb - 2 * so) / ip_dec + FIP_CONSTANT, 3) if ip_dec else None
-
-        xfip = None
-
-        rows.append({
-            "season": season,
-            "pitcher_id": int(pitcher_id),
-            "pitcher_name": str(pitcher_name),
-            "pitcher_team": str(pitcher_team) if pitcher_team else None,
-            "catcher_id": int(catcher_id),
-            "bf": bf,
-            "ip": ip,
-            "era": era,
-            "whip": whip,
-            "k_pct": k_pct,
-            "bb_pct": bb_pct,
-            "fip": fip,
-            "xfip": xfip,
-            "hits": hits,
-            "hr": hr,
-            "bb": bb,
-            "so": so,
-            "er": er,
-        })
+    for s in index.values():
+        rows.append(compute_rates(dict(s)))
     return rows
 
-
-def merge_rows(existing: list[dict], new_rows: list[dict]) -> list[dict]:
-    """Merge rows by (pitcher_id, catcher_id), summing counting stats and re-deriving rates."""
-    # Track outs separately to avoid baseball IP notation arithmetic errors
-    outs_index: dict[tuple, int] = {}
-    index: dict[tuple, dict] = {}
-    for row in existing + new_rows:
-        key = (row["pitcher_id"], row["catcher_id"], row["season"])
-        if key not in index:
-            index[key] = {**row, "bf": 0, "hits": 0, "hr": 0, "bb": 0, "so": 0, "er": 0}
-            outs_index[key] = 0
-        r = index[key]
-        for col in ("bf", "hits", "hr", "bb", "so", "er"):
-            r[col] += row.get(col, 0) or 0
-        outs_index[key] += ip_to_outs(row.get("ip") or 0)
-        r["pitcher_name"] = row["pitcher_name"]
-        r["pitcher_team"] = row.get("pitcher_team")
-
-    result = []
-    for key, r in index.items():
-        outs = outs_index[key]
-        r["ip"] = outs_to_ip(outs)
-        ip_dec = outs / 3
-        bf = r["bf"]
-        r["era"] = safe_rate(r["er"] * 9, ip_dec)
-        r["whip"] = safe_rate(r["hits"] + r["bb"], ip_dec)
-        r["k_pct"] = safe_rate(r["so"] * 100, bf)
-        r["bb_pct"] = safe_rate(r["bb"] * 100, bf)
-        r["fip"] = round((13 * r["hr"] + 3 * r["bb"] - 2 * r["so"]) / ip_dec + FIP_CONSTANT, 3) if ip_dec else None
-        result.append(r)
-    return result
-
-
 def build_totals(rows: list[dict]) -> list[dict]:
-    """Build catcher_id=0 aggregate rows for each pitcher+season."""
+    """Build catcher_id=0 aggregate rows (one per pitcher+season)."""
     totals: dict[tuple, dict] = {}
-    outs_index: dict[tuple, int] = {}
-    for row in rows:
-        if row["catcher_id"] == 0:
+
+    for r in rows:
+        if r["catcher_id"] == 0:
             continue
-        key = (row["pitcher_id"], row["season"])
+        key = (r["season"], r["pitcher_id"])
         if key not in totals:
             totals[key] = {
-                **row, "catcher_id": 0,
-                "bf": 0, "hits": 0, "hr": 0, "bb": 0, "so": 0, "er": 0, "xfip": None,
+                "season":       r["season"],
+                "pitcher_id":   r["pitcher_id"],
+                "catcher_id":   0,
+                "pitcher_team": r.get("pitcher_team"),
+                "bf": 0, "outs": 0, "hits": 0, "hr": 0,
+                "bb": 0, "so": 0, "er": 0,
             }
-            outs_index[key] = 0
         t = totals[key]
-        for col in ("bf", "hits", "hr", "bb", "so", "er"):
-            t[col] += row.get(col, 0) or 0
-        outs_index[key] += ip_to_outs(row.get("ip") or 0)
+        for c in ("bf", "outs", "hits", "hr", "bb", "so", "er"):
+            t[c] += r.get(c, 0) or 0
+        t["pitcher_team"] = r.get("pitcher_team") or t["pitcher_team"]
 
-    result = []
-    for key, t in totals.items():
-        outs = outs_index[key]
-        t["ip"] = outs_to_ip(outs)
-        ip_dec = outs / 3
-        bf = t["bf"]
-        t["era"] = safe_rate(t["er"] * 9, ip_dec)
-        t["whip"] = safe_rate(t["hits"] + t["bb"], ip_dec)
-        t["k_pct"] = safe_rate(t["so"] * 100, bf)
-        t["bb_pct"] = safe_rate(t["bb"] * 100, bf)
-        t["fip"] = round((13 * t["hr"] + 3 * t["bb"] - 2 * t["so"]) / ip_dec + FIP_CONSTANT, 3) if ip_dec else None
-        result.append(t)
-    return result
+    return [compute_rates(dict(t)) for t in totals.values()]
 
+def ingest_retrosheet_season(season: int, db: Client, id_map: dict):
+    print(f"\n=== Season {season} (Retrosheet) ===")
 
-def upsert_stats(db: Client, rows: list[dict]):
-    BATCH = 500
-    for i in range(0, len(rows), BATCH):
-        batch = rows[i:i+BATCH]
-        db.table("pitcher_catcher_stats").upsert(
-            batch,
-            on_conflict="season,pitcher_id,catcher_id"
-        ).execute()
-        print(f"  Upserted {min(i+BATCH, len(rows))}/{len(rows)} stat rows")
-
-
-def upsert_catchers(db: Client, catcher_records: list[dict]):
-    if not catcher_records:
+    try:
+        zip_path = download_retrosheet(season)
+    except Exception as e:
+        print(f"  ERROR downloading: {e}")
         return
-    db.table("catchers").upsert(
-        catcher_records,
-        on_conflict="mlbam_id,season"
-    ).execute()
-    print(f"  Upserted {len(catcher_records)} catcher records")
 
+    print("  Parsing event files…", flush=True)
+    pas, names = parse_retrosheet_season(season, zip_path, id_map)
+    if not pas:
+        print("  No PA data found.")
+        return
 
-COMPLETED_SEASONS = [2024, 2025]  # seasons that are over — skip if data already exists
+    print(f"  {len(pas):,} play records → aggregating…")
+    rows   = aggregate_pas(pas)
+    totals = build_totals(rows)
 
-def season_is_complete(season: int) -> bool:
-    end = date(season, 10, 5)
-    return date.today() > end
+    pitcher_names: dict[int, str] = {}
+    for p in pas:
+        pid = p["pitcher_id"]
+        if pid not in pitcher_names and pid in names:
+            pitcher_names[pid] = names[pid]
 
-def has_existing_data(db: Client, season: int) -> bool:
-    result = db.table("pitcher_catcher_stats").select("id").eq("season", season).limit(1).execute()
-    return len(result.data) > 0
+    all_rows = rows + totals
+    for r in all_rows:
+        pid = r["pitcher_id"]
+        r["pitcher_name"] = pitcher_names.get(pid, names.get(pid, f"Player {pid}"))
+        r.pop("outs", None)    # not a DB column
 
-def main(force_seasons: list[int] | None = None):
-    """
-    force_seasons: list of season years to re-ingest even if they're complete.
-    e.g. python3 scripts/ingest.py --force 2025
-    """
+    print(f"  {len(all_rows)} rows ({len(totals)} totals). Upserting…")
+    upsert_stats(db, all_rows)
+
+    catcher_records = []
+    seen: set[int] = set()
+    for r in rows:
+        cid = r["catcher_id"]
+        if cid and cid not in seen:
+            seen.add(cid)
+            catcher_records.append({
+                "mlbam_id": cid,
+                "name":     names.get(cid, f"Catcher {cid}"),
+                "team":     None,
+                "season":   season,
+            })
+    upsert_catchers(db, catcher_records)
+
+# ── MLB Stats API backend (2026+) ─────────────────────────────────────────────
+
+def mlb_get(path: str, **params) -> dict:
+    url  = f"https://statsapi.mlb.com{path}"
+    resp = requests.get(url, params=params, timeout=30)
+    resp.raise_for_status()
+    return resp.json()
+
+def get_season_game_pks(season: int) -> list[int]:
+    data = mlb_get("/api/v1/schedule",
+                   sportId=1, season=season, gameType="R",
+                   fields="dates,games,gamePk,status,abstractGameState")
+    pks = []
+    for d in data.get("dates", []):
+        for g in d.get("games", []):
+            if g.get("status", {}).get("abstractGameState") == "Final":
+                pks.append(g["gamePk"])
+    return pks
+
+def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
+    """Returns (pa_rows, {mlbam_id: name})."""
+    try:
+        bs = mlb_get(f"/api/v1/game/{game_pk}/boxscore")
+    except Exception:
+        return [], {}
+
+    player_team:  dict[int, str] = {}
+    player_names: dict[int, str] = {}
+    current_catcher: dict[int, int] = {}   # fielding_team_id → catcher_mlbam
+
+    away_id = bs["teams"]["away"]["team"]["id"]
+    home_id = bs["teams"]["home"]["team"]["id"]
+
+    for side, tid in (("away", away_id), ("home", home_id)):
+        team_data = bs["teams"][side]
+        abbr      = team_data["team"].get("abbreviation", "")
+        for p in team_data.get("players", {}).values():
+            pid   = p["person"]["id"]
+            player_team[pid]  = abbr
+            player_names[pid] = p["person"]["fullName"]
+
+            all_pos   = [x.get("code") for x in p.get("allPositions", [])]
+            order_raw = p.get("battingOrder", "")
+            try:
+                is_starter = int(order_raw) % 100 == 0
+            except (ValueError, TypeError):
+                is_starter = False
+
+            if "2" in all_pos and is_starter:
+                current_catcher[tid] = pid
+
+    # Build a quick lookup: player_id → team_id (for catcher sub tracking)
+    player_tid: dict[int, int] = {}
+    for side, tid in (("away", away_id), ("home", home_id)):
+        for p in bs["teams"][side].get("players", {}).values():
+            player_tid[p["person"]["id"]] = tid
+
+    try:
+        pbp = mlb_get(f"/api/v1/game/{game_pk}/playByPlay")
+    except Exception:
+        return [], player_names
+
+    pas: list[dict]  = []
+    prev_score = {"away": 0, "home": 0}
+
+    for play in pbp.get("allPlays", []):
+        # Check playEvents for defensive catcher substitutions
+        for pe in play.get("playEvents", []):
+            ev_type = pe.get("details", {}).get("eventType", "")
+            desc    = pe.get("details", {}).get("description", "").lower()
+            new_pid = pe.get("player", {}).get("id")
+            if ev_type in ("defensive_switch", "defensive_substitution") \
+               and new_pid and "catcher" in desc:
+                tid = player_tid.get(new_pid)
+                if tid is not None:
+                    current_catcher[tid] = new_pid
+
+        result = play.get("result", {})
+        if result.get("type") != "atBat":
+            continue
+
+        about   = play.get("about", {})
+        matchup = play.get("matchup", {})
+        half    = about.get("halfInning", "top")
+
+        if half == "top":
+            fielding_tid = home_id
+            batting_key  = "away"
+        else:
+            fielding_tid = away_id
+            batting_key  = "home"
+
+        pitcher_id = matchup.get("pitcher", {}).get("id")
+        catcher_id = current_catcher.get(fielding_tid)
+
+        if not pitcher_id or not catcher_id:
+            continue
+
+        # Runs scored this PA
+        cur_away = result.get("awayScore", prev_score["away"])
+        cur_home = result.get("homeScore", prev_score["home"])
+        runs = max(0, (cur_away if batting_key == "away" else cur_home)
+                   - prev_score[batting_key])
+        prev_score["away"] = cur_away
+        prev_score["home"] = cur_home
+
+        ev_type = result.get("eventType", "")
+        is_out  = result.get("isOut", False)
+
+        hits = 1 if ev_type in ("single", "double", "triple", "home_run") else 0
+        hr   = 1 if ev_type == "home_run" else 0
+        bb   = 1 if ev_type in ("walk", "intent_walk", "hit_by_pitch") else 0
+        so   = 1 if ev_type in ("strikeout", "strikeout_double_play") else 0
+
+        n_outs = 0
+        if is_out:
+            if ev_type in ("grounded_into_double_play", "strikeout_double_play",
+                           "double_play", "sac_fly_double_play", "sac_bunt_double_play"):
+                n_outs = 2
+            elif ev_type == "triple_play":
+                n_outs = 3
+            else:
+                n_outs = 1
+
+        pas.append({
+            "season":       None,    # filled by caller
+            "pitcher_id":   pitcher_id,
+            "catcher_id":   catcher_id,
+            "pitcher_team": player_team.get(pitcher_id),
+            "is_batter_pa": True,
+            "outs":         n_outs,
+            "hits":         hits,
+            "hr":           hr,
+            "bb":           bb,
+            "hbp":          0,
+            "so":           so,
+            "runs":         runs,
+        })
+
+    return pas, player_names
+
+def ingest_mlbapi_season(season: int, db: Client):
+    print(f"\n=== Season {season} (MLB Stats API) ===")
+    print("  Fetching schedule…", flush=True)
+
+    try:
+        pks = get_season_game_pks(season)
+    except Exception as e:
+        print(f"  ERROR: {e}")
+        return
+
+    print(f"  {len(pks)} completed games.")
+
+    all_pas:   list[dict]    = []
+    all_names: dict[int, str] = {}
+
+    for i, gk in enumerate(pks, 1):
+        if i % 100 == 0 or i == 1:
+            print(f"  Game {i}/{len(pks)}…", flush=True)
+        try:
+            pas, names = process_mlb_game(gk)
+        except Exception as e:
+            print(f"  Warning: game {gk} failed: {e}")
+            continue
+        for p in pas:
+            p["season"] = season
+        all_pas.extend(pas)
+        all_names.update(names)
+        time.sleep(0.05)    # ~20 req/s
+
+    if not all_pas:
+        print("  No data.")
+        return
+
+    print(f"  {len(all_pas):,} PAs → aggregating…")
+    rows   = aggregate_pas(all_pas)
+    totals = build_totals(rows)
+    all_rows = rows + totals
+
+    pitcher_names = {r["pitcher_id"]: all_names.get(r["pitcher_id"], str(r["pitcher_id"]))
+                     for r in rows}
+    for r in all_rows:
+        pid = r["pitcher_id"]
+        r["pitcher_name"] = pitcher_names.get(pid, all_names.get(pid, f"Player {pid}"))
+        r.pop("outs", None)
+
+    print(f"  {len(all_rows)} rows ({len(totals)} totals). Upserting…")
+    upsert_stats(db, all_rows)
+
+    catcher_records = []
+    seen: set[int] = set()
+    for r in rows:
+        cid = r["catcher_id"]
+        if cid and cid not in seen:
+            seen.add(cid)
+            catcher_records.append({
+                "mlbam_id": cid,
+                "name":     all_names.get(cid, f"Catcher {cid}"),
+                "team":     None,
+                "season":   season,
+            })
+    upsert_catchers(db, catcher_records)
+
+# ── DB helpers ────────────────────────────────────────────────────────────────
+
+def upsert_stats(db: Client, rows: list[dict], batch: int = 500):
+    for i in range(0, len(rows), batch):
+        chunk = rows[i:i + batch]
+        db.table("pitcher_catcher_stats").upsert(
+            chunk, on_conflict="season,pitcher_id,catcher_id"
+        ).execute()
+        print(f"  Upserted {min(i + batch, len(rows))}/{len(rows)} stat rows")
+
+def upsert_catchers(db: Client, records: list[dict]):
+    if not records:
+        return
+    db.table("catchers").upsert(records, on_conflict="mlbam_id,season").execute()
+    print(f"  Upserted {len(records)} catcher records")
+
+def has_data(db: Client, season: int) -> bool:
+    r = db.table("pitcher_catcher_stats").select("id").eq("season", season).limit(1).execute()
+    return len(r.data) > 0
+
+def delete_season(db: Client, season: int):
+    db.table("pitcher_catcher_stats").delete().eq("season", season).execute()
+    db.table("catchers").delete().eq("season", season).execute()
+    print(f"  Deleted existing {season} data.")
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+def main():
+    args = sys.argv[1:]
+
+    # --force [year ...]  → re-ingest even if complete
+    force_seasons: set[int] = set()
+    if "--force" in args:
+        idx = args.index("--force")
+        for a in args[idx + 1:]:
+            if a.isdigit():
+                force_seasons.add(int(a))
+        if not force_seasons:
+            force_seasons = set(ALL_SEASONS)
+
+    # --season year  → run only this season
+    single: int | None = None
+    if "--season" in args:
+        idx = args.index("--season")
+        if idx + 1 < len(args):
+            single = int(args[idx + 1])
+
+    seasons = [single] if single else ALL_SEASONS
+
     db = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
-    name_cache: dict[int, str] = {}
 
-    for season in SEASONS:
-        print(f"\n=== Season {season} ===")
+    # Load Chadwick register once if any Retrosheet seasons are being processed
+    retro_needed = any(s in set(RETROSHEET_SEASONS) for s in seasons)
+    id_map: dict[str, int] = load_chadwick_register() if retro_needed else {}
 
-        # Skip completed seasons if we already have data (unless forced)
-        forced = force_seasons and season in force_seasons
-        if not forced and season_is_complete(season) and has_existing_data(db, season):
-            print(f"  Season {season} is complete and data exists — skipping. (use --force {season} to re-run)")
+    for season in seasons:
+        forced = season in force_seasons
+
+        if not forced and season in COMPLETED_SEASONS and has_data(db, season):
+            print(f"\n=== Season {season} — complete, data exists. Skipping. "
+                  f"(pass --force {season} to re-run)")
             continue
+
         if forced:
-            print(f"  Force flag set — deleting existing {season} data and re-ingesting from scratch.")
-            db.table("pitcher_catcher_stats").delete().eq("season", season).execute()
-            db.table("catchers").delete().eq("season", season).execute()
+            delete_season(db, season)
 
-        all_rows: list[dict] = []
-        catcher_info: dict[int, dict] = {}
-
-        # Always pull the full season so cumulative stats are correct
-        chunks = season_date_chunks(season, days=3)
-        print(f"  Pulling full season ({len(chunks)} chunks)")
-        for i, (date_from, date_to) in enumerate(chunks):
-            print(f"  [{i+1}/{len(chunks)}] {date_from} → {date_to}…", end=" ", flush=True)
-            df = fetch_statcast(season, date_from, date_to)
-            if df is None or df.empty:
-                print("empty")
-                continue
-            print(f"{len(df):,} pitches")
-
-            rows = aggregate(df, season)
-            all_rows.extend(rows)
-
-            # Collect catcher metadata
-            if "fielder_2" in df.columns and "fielder_2_1" in df.columns:
-                for _, row_df in df[["fielder_2", "fielder_2_1"]].drop_duplicates().iterrows():
-                    cid = int(row_df["fielder_2"]) if pd.notna(row_df["fielder_2"]) else 0
-                    if cid and cid not in catcher_info:
-                        cname = str(row_df["fielder_2_1"]) if pd.notna(row_df.get("fielder_2_1")) else None
-                        catcher_info[cid] = {"mlbam_id": cid, "name": cname, "team": None, "season": season}
-            elif "fielder_2" in df.columns:
-                for cid in df["fielder_2"].dropna().unique():
-                    cid = int(cid)
-                    if cid and cid not in catcher_info:
-                        catcher_info[cid] = {"mlbam_id": cid, "name": None, "team": None, "season": season}
-
-            time.sleep(1)  # be polite to Savant
-
-        if not all_rows:
-            print(f"  No data for {season}, skipping.")
-            continue
-
-        # Fill in catcher names we don't have from the CSV
-        print(f"\n  Resolving {len(catcher_info)} catcher names…")
-        catcher_records = []
-        for cid, info in catcher_info.items():
-            if not info["name"]:
-                info["name"] = get_catcher_name(cid, name_cache)
-                time.sleep(0.1)
-            catcher_records.append(info)
-
-        # Merge rows from all teams (a pitcher may have rows from multiple team chunks)
-        print(f"  Merging {len(all_rows)} raw rows…")
-        merged = merge_rows([], all_rows)
-
-        # Build per-pitcher totals (catcher_id = 0)
-        totals = build_totals(merged)
-        all_final = merged + totals
-        print(f"  Final: {len(all_final)} rows ({len(totals)} total rows)")
-
-        upsert_stats(db, all_final)
-        upsert_catchers(db, catcher_records)
+        if season in set(RETROSHEET_SEASONS):
+            ingest_retrosheet_season(season, db, id_map)
+        else:
+            ingest_mlbapi_season(season, db)
 
     print("\nDone.")
 
-
 if __name__ == "__main__":
-    import sys
-    force = []
-    args = sys.argv[1:]
-    if "--force" in args:
-        idx = args.index("--force")
-        # Collect all year arguments after --force
-        for a in args[idx + 1:]:
-            if a.isdigit():
-                force.append(int(a))
-    main(force_seasons=force if force else None)
+    main()

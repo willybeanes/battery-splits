@@ -1,31 +1,26 @@
 'use client'
 
-import { Season } from '@/lib/types'
+// All available seasons (newest first)
+const SEASONS = Array.from({ length: 27 }, (_, i) => 2026 - i) // 2026 down to 2000
 
 interface Props {
-  value: Season
-  onChange: (s: Season) => void
+  value: number
+  onChange: (s: number) => void
 }
 
 export function SeasonToggle({ value, onChange }: Props) {
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs font-semibold text-[#888] uppercase tracking-widest">Season</span>
-      <div className="flex rounded-lg overflow-hidden border border-[#d0cbc3]">
-        {([2026, 2025, 2024] as Season[]).map((s) => (
-          <button
-            key={s}
-            onClick={() => onChange(s)}
-            className={`px-4 py-1.5 text-sm font-semibold transition-colors ${
-              value === s
-                ? 'bg-[#1a1a1a] text-white'
-                : 'bg-white text-[#666] hover:text-[#1a1a1a]'
-            }`}
-          >
-            {s}
-          </button>
+      <select
+        value={value}
+        onChange={e => onChange(Number(e.target.value))}
+        className="bg-white border border-[#d0cbc3] rounded-lg px-3 py-1.5 text-sm font-semibold text-[#1a1a1a] outline-none cursor-pointer"
+      >
+        {SEASONS.map(s => (
+          <option key={s} value={s}>{s}</option>
         ))}
-      </div>
+      </select>
     </div>
   )
 }
