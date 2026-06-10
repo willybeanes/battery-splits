@@ -1,6 +1,7 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, Suspense } from 'react'
+import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Season, FilterMode, Catcher, SortDir, TabName,
   LeaderboardResponse, CatcherLeaderboardResponse, BatteryLeaderboardResponse,
@@ -18,20 +19,40 @@ import { BatteryTable }    from '@/components/BatteryTable'
 
 type AnyResponse = LeaderboardResponse | CatcherLeaderboardResponse | BatteryLeaderboardResponse
 
-export default function Home() {
-  const [tab,     setTab]     = useState<TabName>('pitcher')
-  const [season,  setSeason]  = useState<Season>(2026)
-  const [team,    setTeam]    = useState('')
-  const [minBf,   setMinBf]   = useState(0)
-  const [minIp,   setMinIp]   = useState(-1) // -1 = Qualified
+function HomeContent() {
+  const router = useRouter()
+  const sp = useSearchParams()
+
+  const [tab,     setTab]     = useState<TabName>((sp.get('tab') as TabName) ?? 'pitcher')
+  const [season,  setSeason]  = useState<Season>((parseInt(sp.get('season') ?? '2026') as Season))
+  const [team,    setTeam]    = useState(sp.get('team') ?? '')
+  const [minBf,   setMinBf]   = useState(parseInt(sp.get('min_bf') ?? '0'))
+  const [minIp,   setMinIp]   = useState(sp.get('min_ip') !== null ? parseFloat(sp.get('min_ip')!) : QUALIFIED_SENTINEL)
   const [catcher, setCatcher] = useState<Catcher | null>(null)
-  const [mode,    setMode]    = useState<FilterMode>('all')
-  const [sortCol, setSortCol] = useState('fip')
-  const [sortDir, setSortDir] = useState<SortDir>('asc')
-  const [page,    setPage]    = useState(1)
+  const [mode,    setMode]    = useState<FilterMode>((sp.get('mode') as FilterMode) ?? 'all')
+  const [sortCol, setSortCol] = useState(sp.get('sort') ?? 'fip')
+  const [sortDir, setSortDir] = useState<SortDir>((sp.get('dir') as SortDir) ?? 'asc')
+  const [page,    setPage]    = useState(Math.max(1, parseInt(sp.get('page') ?? '1')))
   const [data,    setData]    = useState<AnyResponse | null>(null)
   const [loading, setLoading] = useState(true)
   const [error,   setError]   = useState<string | null>(null)
+
+  // Sync filter state to URL so links are shareable/bookmarkable
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (tab !== 'pitcher')            params.set('tab', tab)
+    if (season !== 2026)              params.set('season', String(season))
+    if (team)                         params.set('team', team)
+    if (minBf !== 0)                  params.set('min_bf', String(minBf))
+    if (minIp !== QUALIFIED_SENTINEL) params.set('min_ip', String(minIp))
+    if (sortCol !== 'fip')            params.set('sort', sortCol)
+    if (sortDir !== 'asc')            params.set('dir', sortDir)
+    if (page !== 1)                   params.set('page', String(page))
+    if (catcher)                      params.set('catcher_id', String(catcher.mlbam_id))
+    if (mode !== 'all')               params.set('mode', mode)
+    const qs = params.toString()
+    router.replace(qs ? `?${qs}` : '/', { scroll: false })
+  }, [tab, season, team, minBf, minIp, catcher?.mlbam_id, mode, sortCol, sortDir, page])
 
   useEffect(() => {
     let alive = true
@@ -76,6 +97,8 @@ export default function Home() {
     setPage(1)
     setCatcher(null)
     setMode('all')
+    // Battery tab doesn't support Qualified — reset to 0 if it was selected
+    if (t === 'battery' && minIp === QUALIFIED_SENTINEL) setMinIp(0)
   }
 
   function handleSort(col: string) {
@@ -145,7 +168,7 @@ export default function Home() {
             <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
             <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />
             <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />
-            <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} season={season} />
+            <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} season={season} hideQualified={tab === 'battery'} />
             {tab === 'pitcher' && (
               <>
                 <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
@@ -221,5 +244,13 @@ export default function Home() {
         </p>
       </div>
     </main>
+  )
+}
+
+export default function Home() {
+  return (
+    <Suspense>
+      <HomeContent />
+    </Suspense>
   )
 }

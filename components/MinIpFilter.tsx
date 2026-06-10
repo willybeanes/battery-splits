@@ -11,9 +11,10 @@ interface Props {
   value: number
   onChange: (n: number) => void
   season: number
+  hideQualified?: boolean
 }
 
-export function MinIpFilter({ value, onChange, season }: Props) {
+export function MinIpFilter({ value, onChange, season, hideQualified }: Props) {
   const qualIp = qualifiedIp(season)
   return (
     <div className="flex items-center gap-2">
@@ -26,7 +27,9 @@ export function MinIpFilter({ value, onChange, season }: Props) {
         {BASE_OPTIONS.map(n => (
           <option key={n} value={n}>{n}</option>
         ))}
-        <option value={QUALIFIED_SENTINEL}>Qualified ({qualIp} IP)</option>
+        {!hideQualified && (
+          <option value={QUALIFIED_SENTINEL}>Qualified ({qualIp} IP)</option>
+        )}
       </select>
     </div>
   )

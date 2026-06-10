@@ -145,6 +145,42 @@ def load_chadwick_register() -> dict[str, int]:
 
 # ── Retrosheet event-code parser ─────────────────────────────────────────────
 
+def _has_error(s: str) -> bool:
+    """Return True if s contains a Retrosheet error indicator inside parentheses.
+
+    Handles both forms:
+      (E2)        – error by fielder 2           → "(E" present
+      (1E4)       – fielder 1 threw to 4, E by 4 → r'\\(\\d+E' matches
+      (E1/TH)     – error, even after '/' splits  → "(E" present in truncated token
+      (1E4/TH)    – same, digit-E form            → r'\\(\\d+E' matches truncated token
+    """
+    return "(E" in s or bool(re.search(r'\(\d+E', s))
+
+def _all_parens_have_error(adv: str) -> bool:
+    """Return True when EVERY parenthetical group in *adv* contains an 'E'.
+
+    In Retrosheet advance notation 'X' means the runner is out, but an error
+    can override that.  The key insight: if ALL parentheticals contain an error
+    the putout was never completed and the runner is safe.  But if at least one
+    parenthetical is clean (no 'E'), a subsequent fielder completed the out
+    despite the error(s), so the runner IS out.
+
+    Examples
+    --------
+    "1X2(6E4)"           [(6E4)]          all have E   → True  (runner safe)
+    "1X3(4E6)(E6)"       [(4E6),(E6)]     all have E   → True  (runner safe)
+    "1X3(75)(E6)"        [(75),(E6)]      (75) clean   → False (runner out)
+    "1XH(E1/TH)(525)"    [(E1/TH),(525)]  (525) clean  → False (runner out)
+    "1X3(E1/TH)(51)"     [(E1/TH),(51)]   (51) clean   → False (runner out)
+    "BX3(365)(E7/TH)"    [(365),(E7/TH)]  (365) clean  → False (runner out)
+    "1X2(24)"            [(24)]           no E         → False (runner out)
+    "1X3"                []               no parens    → False (runner out)
+    """
+    parens = re.findall(r'\([^)]*\)', adv)
+    if not parens:
+        return False        # no fielding info → bare X means out
+    return all("E" in p for p in parens)
+
 def parse_retro_event(raw: str) -> dict:
     """
     Parse a Retrosheet event code string.
@@ -182,35 +218,60 @@ def parse_retro_event(raw: str) -> dict:
     secondary = code.split("+")[1].upper() if "+" in code else ""
     b = primary.upper()
 
-    # ── count runs from advances  (e.g. "2-H" = runner scores) ───────────
+    # ── count runs and runner outs from advances ──────────────────────────
+    # Advance format: "2-H" = runner from 2nd scores; "2XH(82)" = runner out at home
+    # We defer the runner-out counting until after the primary event is processed,
+    # because we only want to add it when the primary recorded 0 outs (to avoid
+    # double-counting with FC/DP plays which already account for the runner out).
     for adv in advances.split(";"):
         adv_clean = re.sub(r"\([^)]*\)", "", adv.strip())
-        # Safe score: something-H without X (e.g. "2-H", "B-H")
         adv_up = adv_clean.upper()
         if adv_up.endswith("H") and "X" not in adv_up:
             r["runs"] += 1
 
     # ── non-batter-PA events ──────────────────────────────────────────────
-    for prefix in ("WP", "PB", "BK", "NP", "DI", "OA"):
+    # Events that never produce runner outs in their advance field
+    for prefix in ("NP", "DI", "FLE"):
         if b.startswith(prefix):
             r["is_batter_pa"] = False
             return r
 
-    if b.startswith("SB"):
+    # Non-PA events whose advance field *can* contain runner outs (e.g. a runner
+    # thrown out while a wild pitch / stolen-base attempt unfolds).
+    for prefix in ("SB", "WP", "PB", "BK"):
+        if b.startswith(prefix):
+            r["is_batter_pa"] = False
+            for adv in advances.split(";"):
+                adv_clean = re.sub(r"\([^)]*\)", "", adv.strip()).upper()
+                if "X" in adv_clean and adv_clean[0] in ("B", "1", "2", "3"):
+                    if not _all_parens_have_error(adv):
+                        r["outs"] += 1
+            return r
+
+    # OA = "Other Advance" — non-PA baserunning event; advances may contain
+    # runner outs (e.g. OA.1X2(26) = runner thrown out at 2nd).
+    if b.startswith("OA"):
         r["is_batter_pa"] = False
+        for adv in advances.split(";"):
+            adv_clean = re.sub(r"\([^)]*\)", "", adv.strip()).upper()
+            if "X" in adv_clean and adv_clean[0] in ("B", "1", "2", "3"):
+                if not _all_parens_have_error(adv):
+                    r["outs"] += 1
         return r
 
     # Caught stealing / pickoff-caught-stealing
+    # Error notation can appear as (E2), (1E4), (6E4), (E1/TH), etc.
+    # Use _has_error() which handles both forms and survives '/' splitting.
     if b.startswith("POCS") or b.startswith("CS"):
         r["is_batter_pa"] = False
-        if "(E" not in b:          # no error → runner is out
+        if not _has_error(b):   # no error → runner is out
             r["outs"] = 1
         return r
 
     # Pickoff (not POCS, already handled)
     if b.startswith("PO"):
         r["is_batter_pa"] = False
-        if "(E" not in b:
+        if not _has_error(b):
             r["outs"] = 1
         return r
 
@@ -218,9 +279,17 @@ def parse_retro_event(raw: str) -> dict:
 
     if b == "K":
         r["so"] = 1
-        # K+WP, K+PB, K+E → dropped third strike, batter reaches
-        if secondary.startswith(("WP", "PB", "E")):
-            r["outs"] = 0
+        if secondary.startswith(("WP", "PB")):
+            # Dropped third strike on WP/PB: batter reaches ONLY when a "B-"
+            # advance is present.  If no "B-", the WP/PB just moved a baserunner
+            # and the batter is still out (e.g. K+WP.1-2 → batter out, 1 out).
+            batter_advanced = any(
+                re.sub(r"\([^)]*\)", "", a.strip()).upper().startswith("B-")
+                for a in advances.split(";") if a.strip()
+            )
+            r["outs"] = 0 if batter_advanced else 1
+        elif secondary.startswith("E"):
+            r["outs"] = 0   # catcher error on dropped K → batter always reaches
         else:
             r["outs"] = 1
 
@@ -239,9 +308,18 @@ def parse_retro_event(raw: str) -> dict:
     elif b.startswith("E"):                   # error (batter reaches)
         pass
 
-    elif b.startswith("FC"):                  # fielder's choice (batter safe, runner out)
+    elif b.startswith("FC"):                  # fielder's choice
         if "E" not in modifiers:
-            r["outs"] = 1
+            # Only credit an out if a runner is actually retired (X in advances)
+            # AND the error check passes — use _all_parens_have_error so that a
+            # supplemental error paren like (E6) after a clean (75) doesn't mask
+            # the out (e.g. 1X3(75)(E6) → out stands; 1X2(6E4) → runner safe).
+            for _adv in advances.split(";"):
+                _ac = re.sub(r"\([^)]*\)", "", _adv.strip()).upper()
+                if "X" in _ac and _ac[0] in ("1", "2", "3"):
+                    if not _all_parens_have_error(_adv):
+                        r["outs"] = 1
+                        break
 
     elif b[0] == "S":                         # single  (S, S7, S8, S9…)
         r["hits"] = 1
@@ -256,8 +334,11 @@ def parse_retro_event(raw: str) -> dict:
         r["hits"] = 1
         r["hr"]   = 1
 
+    elif b[0].isdigit() and "E" in b:
+        pass   # fielding error reaching on attempt (e.g. 6E3, 4E6): batter safe, 0 outs
+
     else:
-        # Default: fielded out (digit sequences: 63, 8, 543, etc.)
+        # Default: fielded out (pure digit sequences: 63, 8, 543, etc.)
         r["outs"] = 1
 
     # ── modifier adjustments ──────────────────────────────────────────────
@@ -265,6 +346,36 @@ def parse_retro_event(raw: str) -> dict:
         r["outs"] += 2                  # triple play  → total 3
     elif "DP" in modifiers or "GDP" in modifiers:
         r["outs"] += 1                  # double play  → total 2
+
+    # ── secondary event out (e.g. W+CS3, S8+CS2) ─────────────────────────
+    # When the primary event is a non-out (walk, hit, etc.) and the compound
+    # secondary is a caught-stealing or pickoff without an error, that runner
+    # is out and must be credited to the pitcher.
+    if secondary and r["outs"] == 0:
+        if (secondary.startswith("CS") or secondary.startswith("PO") or
+                secondary.startswith("POCS")):
+            if not _has_error(secondary):
+                r["outs"] = 1
+
+    # ── runner / batter outs in advances (e.g. S8.2XH, S7.BX2) ─────────
+    # Only when the primary event recorded 0 outs — otherwise we'd double-count
+    # the out already represented by a fielder's choice or fielded-out play.
+    # Covers both baserunner outs (1X/2X/3X) and batter-out-while-advancing (BX):
+    #   S7.BX2(74) = single, batter thrown out trying to stretch to 2nd
+    #   S8.2XH(82) = single, runner from 2nd thrown out at home
+    if r["outs"] == 0 and advances:
+        for adv in advances.split(";"):
+            adv_clean = re.sub(r"\([^)]*\)", "", adv.strip())
+            adv_up = adv_clean.upper()
+            if "X" not in adv_up:
+                continue
+            # Runner is safe only when ALL parentheticals contain an error.
+            # A single clean paren means the out was completed despite errors.
+            if _all_parens_have_error(adv):
+                continue
+            runner = adv_up[0]  # 'B' = batter, '1'/'2'/'3' = baserunner
+            if runner in ("B", "1", "2", "3"):
+                r["outs"] += 1
 
     return r
 

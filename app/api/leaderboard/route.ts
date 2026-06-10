@@ -57,15 +57,24 @@ async function getCatcherCountMap(
   db: ReturnType<typeof createServiceClient>,
   season: number
 ): Promise<Map<number, number>> {
-  const { data } = await db
-    .from('pitcher_catcher_stats')
-    .select('pitcher_id, catcher_id')
-    .eq('season', season)
-    .neq('catcher_id', 0)
-    .limit(10000)
+  // Supabase's server-side max_rows caps single requests at 1000 regardless of
+  // .limit(). Paginate in chunks so we get every pitcher-catcher combination.
   const map = new Map<number, number>()
-  for (const r of data ?? []) {
-    map.set(r.pitcher_id, (map.get(r.pitcher_id) ?? 0) + 1)
+  const PAGE = 1000
+  let from = 0
+  while (true) {
+    const { data } = await db
+      .from('pitcher_catcher_stats')
+      .select('pitcher_id')
+      .eq('season', season)
+      .neq('catcher_id', 0)
+      .range(from, from + PAGE - 1)
+    if (!data || data.length === 0) break
+    for (const r of data) {
+      map.set(r.pitcher_id, (map.get(r.pitcher_id) ?? 0) + 1)
+    }
+    if (data.length < PAGE) break
+    from += PAGE
   }
   return map
 }
@@ -252,9 +261,8 @@ async function handleBatteryTab(
 ) {
   const { season, team, minBf, minIp, sort, dir, page, exportCsv } = params
 
-  const [catcherMap, qualIds, { data: allRows, error }] = await Promise.all([
+  const [catcherMap, { data: allRows, error }] = await Promise.all([
     getCatcherMap(db, season),
-    getQualifyingPitcherIds(db, season, minBf, minIp, team),
     db.from('pitcher_catcher_stats').select('*').eq('season', season)
       .neq('catcher_id', 0).limit(10000),
   ])
@@ -262,9 +270,12 @@ async function handleBatteryTab(
 
   const rows = (allRows ?? [])
     .filter(r => {
-      if (!qualIds.has(r.pitcher_id)) return false  // qualify by pitcher total, not split
       if (team && r.pitcher_team !== team) return false
-      return catcherMap.has(r.catcher_id)
+      if (!catcherMap.has(r.catcher_id)) return false
+      // Apply min IP and min BF to the combination itself, not the pitcher's total
+      if ((r.bf ?? 0) < minBf) return false
+      if (Number(r.ip ?? 0) < minIp) return false
+      return true
     })
     .map(r => {
       const meta = catcherMap.get(r.catcher_id)!
