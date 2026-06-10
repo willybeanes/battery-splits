@@ -209,41 +209,48 @@ async function handleCatcherTab(
 ) {
   const { season, team, minBf, minIp, sort, dir, page, exportCsv } = params
 
-  const [catcherMap, { data: allRows, error }] = await Promise.all([
-    getCatcherMap(db, season),
-    db.from('pitcher_catcher_stats').select('*').eq('season', season)
-      .neq('catcher_id', 0).limit(10000),
-  ])
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const catcherMap = await getCatcherMap(db, season)
 
-  // Aggregate by catcher_id
+  // Paginate to bypass Supabase server-side max_rows=1000 cap
   const agg = new Map<number, {
     catcher_id: number; catcher_name: string; catcher_team: string | null
-    bf: number; ip: number; hits: number; hr: number; bb: number; so: number; er: number
+    bf: number; outs: number; hits: number; hr: number; bb: number; so: number; er: number
   }>()
-
-  for (const r of allRows ?? []) {
-    const cid = r.catcher_id
-    const meta = catcherMap.get(cid)
-    if (!meta) continue
-    if (team && r.pitcher_team !== team) continue
-    if (!agg.has(cid)) {
-      agg.set(cid, {
-        catcher_id: cid, catcher_name: meta.name, catcher_team: meta.team,
-        bf: 0, ip: 0, hits: 0, hr: 0, bb: 0, so: 0, er: 0,
-      })
+  const PAGE = 1000
+  let from = 0
+  while (true) {
+    const { data: page, error } = await db
+      .from('pitcher_catcher_stats').select('*')
+      .eq('season', season).neq('catcher_id', 0)
+      .range(from, from + PAGE - 1)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!page || page.length === 0) break
+    for (const r of page) {
+      const cid = r.catcher_id
+      const meta = catcherMap.get(cid)
+      if (!meta) continue
+      if (team && r.pitcher_team !== team) continue
+      if (!agg.has(cid)) {
+        agg.set(cid, {
+          catcher_id: cid, catcher_name: meta.name, catcher_team: meta.team,
+          bf: 0, outs: 0, hits: 0, hr: 0, bb: 0, so: 0, er: 0,
+        })
+      }
+      const a = agg.get(cid)!
+      a.bf   += r.bf   ?? 0
+      a.outs += ipToOuts(Number(r.ip ?? 0))  // accumulate as outs to avoid decimal drift
+      a.hits += r.hits ?? 0
+      a.hr   += r.hr   ?? 0
+      a.bb   += r.bb   ?? 0
+      a.so   += r.so   ?? 0
+      a.er   += r.er   ?? 0
     }
-    const a = agg.get(cid)!
-    a.bf   += r.bf   ?? 0
-    a.ip    = Math.round((a.ip + Number(r.ip ?? 0)) * 10) / 10
-    a.hits += r.hits ?? 0
-    a.hr   += r.hr   ?? 0
-    a.bb   += r.bb   ?? 0
-    a.so   += r.so   ?? 0
-    a.er   += r.er   ?? 0
+    if (page.length < PAGE) break
+    from += PAGE
   }
 
   const rows = [...agg.values()]
+    .map(r => ({ ...r, ip: outsToIp(r.outs) }))
     .filter(r => r.bf >= minBf && r.ip >= minIp)
     .map(r => ({ ...r, ...deriveRates(r.hits, r.bb, r.so, r.hr, r.er, r.bf, r.ip) }))
 
