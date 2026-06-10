@@ -1,7 +1,5 @@
 'use client'
 
-import { qualifiedIp } from '@/lib/qualified'
-
 const BASE_OPTIONS = [0, 5, 10, 20, 30, 50, 75, 100]
 
 // -1 is the sentinel value meaning "Qualified" (prorated)
@@ -10,12 +8,10 @@ export const QUALIFIED_SENTINEL = -1
 interface Props {
   value: number
   onChange: (n: number) => void
-  season: number
   hideQualified?: boolean
 }
 
-export function MinIpFilter({ value, onChange, season, hideQualified }: Props) {
-  const qualIp = qualifiedIp(season)
+export function MinIpFilter({ value, onChange, hideQualified }: Props) {
   return (
     <div className="flex items-center gap-2">
       <span className="text-xs font-semibold text-[#888] uppercase tracking-widest">Min IP</span>
@@ -28,7 +24,7 @@ export function MinIpFilter({ value, onChange, season, hideQualified }: Props) {
           <option key={n} value={n}>{n}</option>
         ))}
         {!hideQualified && (
-          <option value={QUALIFIED_SENTINEL}>Qualified ({qualIp} IP)</option>
+          <option value={QUALIFIED_SENTINEL}>Qualified</option>
         )}
       </select>
     </div>

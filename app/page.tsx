@@ -168,7 +168,7 @@ function HomeContent() {
             <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
             <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />
             <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />
-            <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} season={season} hideQualified={tab === 'battery'} />
+            <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} hideQualified={tab === 'battery'} />
             {tab === 'pitcher' && (
               <>
                 <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
