@@ -226,7 +226,7 @@ async function handleCatcherTab(
     const cid = r.catcher_id
     const meta = catcherMap.get(cid)
     if (!meta) continue
-    if (team && meta.team !== team) continue
+    if (team && r.pitcher_team !== team) continue
     if (!agg.has(cid)) {
       agg.set(cid, {
         catcher_id: cid, catcher_name: meta.name, catcher_team: meta.team,
