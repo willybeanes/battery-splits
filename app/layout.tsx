@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { DM_Sans, DM_Mono } from "next/font/google";
+import Script from "next/script";
 import "./globals.css";
 
 const dmSans = DM_Sans({
@@ -31,7 +32,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-[#edeae4]">
         {children}
-        <script data-goatcounter="https://battery-splits.goatcounter.com/count" async src="//gc.zgo.at/count.js" />
+        <Script data-goatcounter="https://battery-splits.goatcounter.com/count" src="//gc.zgo.at/count.js" strategy="afterInteractive" />
       </body>
     </html>
   );
