@@ -150,7 +150,7 @@ function HomeContent() {
         <div>
           <h1 className="text-3xl font-black tracking-tight text-[#1a1a1a]">Battery Splits</h1>
           <p className="text-sm text-[#666] mt-1">
-            MLB pitcher leaderboard with catcher presence filter — powered by Baseball Savant Statcast
+            MLB pitcher leaderboard with catcher presence filter — powered by Retrosheet
           </p>
         </div>
 
