@@ -290,7 +290,7 @@ async function handleBatteryTab(
   const rows = allRows
     .filter(r => {
       if (team && r.pitcher_team !== team) return false
-      if (!catcherMap.has(r.catcher_id)) return false
+      if (!catcherMap.has(r.catcher_id as number)) return false
       if (pitcherId && r.pitcher_id !== pitcherId) return false
       if (catcherId && r.catcher_id !== catcherId) return false
       // Apply min IP and min BF to the combination itself, not the pitcher's total
@@ -299,7 +299,7 @@ async function handleBatteryTab(
       return true
     })
     .map(r => {
-      const meta = catcherMap.get(r.catcher_id)!
+      const meta = catcherMap.get(r.catcher_id as number)!
       return {
         pitcher_id: r.pitcher_id, pitcher_name: r.pitcher_name,
         pitcher_team: r.pitcher_team,
