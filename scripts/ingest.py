@@ -652,20 +652,29 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
     prev_score = {"away": 0, "home": 0}
 
     for play in pbp.get("allPlays", []):
-        # Check playEvents for defensive catcher substitutions
+        # Check playEvents for defensive catcher substitutions and baserunning outs
+        baserunning_outs = 0
         for pe in play.get("playEvents", []):
-            ev_type = pe.get("details", {}).get("eventType", "")
-            desc    = pe.get("details", {}).get("description", "").lower()
+            det     = pe.get("details", {})
+            ev_type = det.get("eventType", "")
+            desc    = det.get("description", "").lower()
             new_pid = pe.get("player", {}).get("id")
             if ev_type in ("defensive_switch", "defensive_substitution") \
                and new_pid and "catcher" in desc:
                 tid = player_tid.get(new_pid)
                 if tid is not None:
                     current_catcher[tid] = new_pid
+            elif det.get("isOut") and ev_type in (
+                "caught_stealing_2b", "caught_stealing_3b", "caught_stealing_home",
+                "pickoff_1b", "pickoff_2b", "pickoff_3b",
+                "pickoff_caught_stealing_2b", "pickoff_caught_stealing_3b",
+                "pickoff_caught_stealing_home",
+                "runner_double_play", "runner_out",
+            ):
+                baserunning_outs += 1
 
         result = play.get("result", {})
-        if result.get("type") != "atBat":
-            continue
+        play_type = result.get("type")
 
         about   = play.get("about", {})
         matchup = play.get("matchup", {})
@@ -673,16 +682,35 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
 
         if half == "top":
             fielding_tid = home_id
-            batting_key  = "away"
         else:
             fielding_tid = away_id
-            batting_key  = "home"
+
+        if baserunning_outs:
+            pitcher_id = matchup.get("pitcher", {}).get("id")
+            catcher_id = current_catcher.get(fielding_tid)
+            if pitcher_id and catcher_id:
+                pas.append({
+                    "season":       None,
+                    "pitcher_id":   pitcher_id,
+                    "catcher_id":   catcher_id,
+                    "pitcher_team": player_team.get(pitcher_id),
+                    "is_batter_pa": False,
+                    "outs":         baserunning_outs,
+                    "hits": 0, "hr": 0, "bb": 0, "hbp": 0, "so": 0, "runs": 0,
+                })
+        if half == "top":
+            batting_key = "away"
+        else:
+            batting_key = "home"
 
         pitcher_id = matchup.get("pitcher", {}).get("id")
         catcher_id = current_catcher.get(fielding_tid)
 
         if not pitcher_id or not catcher_id:
             continue
+
+        ev_type = result.get("eventType", "")
+        is_out  = result.get("isOut", False)
 
         # Runs scored this PA
         cur_away = result.get("awayScore", prev_score["away"])
@@ -691,9 +719,6 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
                    - prev_score[batting_key])
         prev_score["away"] = cur_away
         prev_score["home"] = cur_home
-
-        ev_type = result.get("eventType", "")
-        is_out  = result.get("isOut", False)
 
         hits = 1 if ev_type in ("single", "double", "triple", "home_run") else 0
         hr   = 1 if ev_type == "home_run" else 0
