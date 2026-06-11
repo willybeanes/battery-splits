@@ -63,6 +63,7 @@ export interface BatteryRow {
   bb: number
   so: number
   er: number
+  chem_score: number | null
 }
 
 export interface PitcherSplitRow {

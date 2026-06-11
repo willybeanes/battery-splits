@@ -288,13 +288,49 @@ async function handleBatteryTab(
     from += PAGE
   }
 
+  // Fetch pitcher season FIPs for chem score computation
+  const { data: pitcherTotals } = await db
+    .from('pitcher_catcher_stats').select('pitcher_id, fip')
+    .eq('season', season).eq('catcher_id', 0)
+  const pitcherFipMap = new Map<number, number>()
+  for (const r of pitcherTotals ?? []) {
+    if (r.fip != null) pitcherFipMap.set(r.pitcher_id, r.fip)
+  }
+
+  // Compute chem score: normalised percentile of (pitcher_season_fip - combo_fip)
+  // Only for combos with >= 20 IP where both FIPs are known
+  const CHEM_MIN_IP = 20
+  const diffs: number[] = []
+  for (const r of allRows) {
+    const seasonFip = pitcherFipMap.get(r.pitcher_id)
+    if (Number(r.ip) >= CHEM_MIN_IP && seasonFip != null && r.fip != null) {
+      diffs.push(seasonFip - r.fip)
+    }
+  }
+  let chemMean = 0, chemStd = 1
+  if (diffs.length > 1) {
+    chemMean = diffs.reduce((s, d) => s + d, 0) / diffs.length
+    chemStd = Math.sqrt(diffs.reduce((s, d) => s + (d - chemMean) ** 2, 0) / diffs.length) || 1
+  }
+  function normalCdf(z: number): number {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z))
+    const d = 0.3989423 * Math.exp(-z * z / 2)
+    const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.7814779 + t * (-1.8212560 + t * 1.3302744))))
+    return z > 0 ? 1 - p : p
+  }
+  function chemScore(r: StatRow): number | null {
+    const seasonFip = pitcherFipMap.get(r.pitcher_id)
+    if (Number(r.ip) < CHEM_MIN_IP || seasonFip == null || r.fip == null) return null
+    const z = ((seasonFip - r.fip) - chemMean) / chemStd
+    return Math.round(normalCdf(z) * 100)
+  }
+
   const rows = allRows
     .filter(r => {
       if (team && r.pitcher_team !== team) return false
       if (!catcherMap.has(r.catcher_id as number)) return false
       if (pitcherId && r.pitcher_id !== pitcherId) return false
       if (catcherId && r.catcher_id !== catcherId) return false
-      // Apply min IP and min BF to the combination itself, not the pitcher's total
       if ((r.bf ?? 0) < minBf) return false
       if (Number(r.ip ?? 0) < minIp) return false
       return true
@@ -308,11 +344,12 @@ async function handleBatteryTab(
         bf: r.bf, ip: r.ip, hits: r.hits, hr: r.hr, bb: r.bb, so: r.so, er: r.er,
         era: r.era, whip: r.whip, k_pct: r.k_pct, bb_pct: r.bb_pct,
         fip: r.fip, xfip: r.xfip,
+        chem_score: chemScore(r),
       }
     })
 
   const sorted = sortRows(rows, sort, dir)
-  const BATTERY_CSV_COLS = ['pitcher_id', 'pitcher_name', 'pitcher_team', 'catcher_id', 'catcher_name', 'catcher_team', 'bf', 'ip', 'era', 'whip', 'k_pct', 'bb_pct', 'fip', 'hits', 'hr', 'bb', 'so', 'er']
+  const BATTERY_CSV_COLS = ['pitcher_id', 'pitcher_name', 'pitcher_team', 'catcher_id', 'catcher_name', 'catcher_team', 'bf', 'ip', 'era', 'whip', 'k_pct', 'bb_pct', 'fip', 'hits', 'hr', 'bb', 'so', 'er', 'chem_score']
   if (exportCsv) return csvResponse(toCsv(BATTERY_CSV_COLS, sorted as unknown as Record<string, unknown>[]), `battery-splits-battery-${season}.csv`)
   return NextResponse.json(paginate(sorted, page))
 }

@@ -36,13 +36,14 @@ export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, on
               <StatHeader col="whip"  label="WHIP" sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
               <StatHeader col="k_pct" label="K%"   sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
               <StatHeader col="bb_pct" label="BB%" sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
-              <StatHeader col="fip"   label="FIP"  sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
+              <StatHeader col="fip"        label="FIP"  sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
+              <StatHeader col="chem_score" label="Chem" sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Chemistry Score: percentile rank of (pitcher season FIP − combo FIP). Requires 20 IP together. 100 = catcher most helps pitcher's FIP." />
             </tr>
           </thead>
           <tbody className={loading ? 'opacity-50' : ''}>
             {rows.length === 0 && !loading && (
               <tr>
-                <td colSpan={11} className="px-4 py-12 text-center text-[#aaa] text-sm">
+                <td colSpan={12} className="px-4 py-12 text-center text-[#aaa] text-sm">
                   No data available for this filter.
                 </td>
               </tr>
@@ -62,6 +63,12 @@ export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, on
                 <td className="px-3 py-2.5 text-right font-mono text-sm text-[#333]">{fmt(row.bb_pct, 1)}%</td>
                 <td className="px-3 py-2.5 text-right font-mono text-sm">
                   <span className={fipColor(row.fip)}>{fmt(row.fip)}</span>
+                </td>
+                <td className="px-3 py-2.5 text-right font-mono text-sm">
+                  {row.chem_score == null
+                    ? <span className="text-[#ccc]">—</span>
+                    : <span className={row.chem_score >= 70 ? 'text-emerald-600 font-semibold' : row.chem_score <= 30 ? 'text-red-500 font-semibold' : 'text-[#555]'}>{row.chem_score}</span>
+                  }
                 </td>
               </tr>
             ))}
