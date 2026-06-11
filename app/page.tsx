@@ -129,7 +129,8 @@ function HomeContent() {
     const base = `${season} Season`
     if (tab === 'catcher') return `${base} · Pitcher stats by catcher`
     if (tab === 'battery') return `${base} · All pitcher–catcher combinations`
-    if (!catcher) return `${base} · All Catchers`
+    if (!catcher && !pitcher) return `${base} · All Pitchers`
+    if (pitcher && !catcher) return `${base} · ${pitcher.name}`
     const bfLabel = (data as LeaderboardResponse)?.catcherBf
       ? ` (${(data as LeaderboardResponse).catcherBf!.toLocaleString()} BF)` : ''
     if (mode === 'was')   return `${base} · With ${catcher.name} catching${bfLabel}`
