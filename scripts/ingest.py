@@ -443,6 +443,8 @@ def apply_official_er(
     Groups PAs by game_id, looks up gamePk via schedule, fetches ER per pitcher,
     and allocates to catchers proportionally by BF. Modifies pas in-place.
     """
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     # Zero out run-based ER
     for pa in pas:
         pa["runs"] = 0
@@ -457,23 +459,45 @@ def apply_official_er(
         game_bf[gid][(pa["pitcher_id"], pa["catcher_id"])] += 1
         game_pitcher_team[gid][pa["pitcher_id"]] = pa.get("pitcher_team") or ""
 
-    for game_id, bf_map in game_bf.items():
-        # Parse game_id → date + home team abbr + game number
-        # Format: TTTYYYYMMDDG  e.g. LAN202104090
+    # Resolve game_ids → gamePks
+    game_pks: dict[str, int] = {}
+    for game_id in game_bf:
         if len(game_id) < 12:
             continue
         home_retro = game_id[:3]
         y, mo, d, g = game_id[3:7], game_id[7:9], game_id[9:11], game_id[11]
         date_str  = f"{y}-{mo}-{d}"
         home_abbr = RETRO_TEAM.get(home_retro, home_retro)
-        # Retrosheet: 0=single game, 1=first DH, 2=second DH → MLB: 1 or 2
         game_num  = 2 if g == "2" else 1
+        pk = schedule.get((date_str, home_abbr, game_num))
+        if pk:
+            game_pks[game_id] = pk
 
-        game_pk = schedule.get((date_str, home_abbr, game_num))
+    # Pre-fetch all boxscores in parallel (cached ones are instant)
+    uncached = [pk for pk in set(game_pks.values())
+                if not (CACHE_DIR / f"bs_er_{pk}.json").exists()]
+    if uncached:
+        print(f"    Fetching {len(uncached)} boxscores…", flush=True)
+        with ThreadPoolExecutor(max_workers=20) as ex:
+            futures = {ex.submit(fetch_boxscore_er, pk): pk for pk in uncached}
+            done = 0
+            for f in as_completed(futures):
+                f.result()  # surface exceptions
+                done += 1
+                if done % 200 == 0:
+                    print(f"    {done}/{len(uncached)}…", flush=True)
+
+    # Now build the er_cache from disk
+    er_cache: dict[int, dict[int, int]] = {}
+    for pk in set(game_pks.values()):
+        er_cache[pk] = fetch_boxscore_er(pk)
+
+    for game_id, bf_map in game_bf.items():
+        game_pk = game_pks.get(game_id)
         if not game_pk:
             continue
 
-        official_er = fetch_boxscore_er(game_pk)
+        official_er = er_cache.get(game_pk, {})
         if not official_er:
             continue
 
