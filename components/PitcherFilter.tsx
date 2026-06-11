@@ -1,30 +1,27 @@
 'use client'
 
 import { useState, useRef, useEffect, useCallback } from 'react'
-import { Catcher, FilterMode, Season } from '@/lib/types'
+import { Pitcher, Season } from '@/lib/types'
 
 interface Props {
   season: Season
-  selectedCatcher: Catcher | null
-  mode: FilterMode
-  onCatcherChange: (c: Catcher | null) => void
-  onModeChange: (m: FilterMode) => void
-  hideMode?: boolean
+  selectedPitcher: Pitcher | null
+  onPitcherChange: (p: Pitcher | null) => void
 }
 
-export function CatcherFilter({ season, selectedCatcher, mode, onCatcherChange, onModeChange, hideMode }: Props) {
+export function PitcherFilter({ season, selectedPitcher, onPitcherChange }: Props) {
   const [query, setQuery] = useState('')
-  const [results, setResults] = useState<Catcher[]>([])
+  const [results, setResults] = useState<Pitcher[]>([])
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const dropdownRef = useRef<HTMLDivElement>(null)
 
-  const fetchCatchers = useCallback(async (q: string) => {
+  const fetchPitchers = useCallback(async (q: string) => {
     if (q.length < 2) { setResults([]); return }
     setLoading(true)
     try {
-      const res = await fetch(`/api/catchers?q=${encodeURIComponent(q)}&season=${season}`)
+      const res = await fetch(`/api/pitchers?q=${encodeURIComponent(q)}&season=${season}`)
       const data = await res.json()
       setResults(data)
       setOpen(true)
@@ -34,9 +31,9 @@ export function CatcherFilter({ season, selectedCatcher, mode, onCatcherChange, 
   }, [season])
 
   useEffect(() => {
-    const t = setTimeout(() => fetchCatchers(query), 200)
+    const t = setTimeout(() => fetchPitchers(query), 200)
     return () => clearTimeout(t)
-  }, [query, fetchCatchers])
+  }, [query, fetchPitchers])
 
   useEffect(() => {
     function handleClick(e: MouseEvent) {
@@ -51,48 +48,26 @@ export function CatcherFilter({ season, selectedCatcher, mode, onCatcherChange, 
     return () => document.removeEventListener('mousedown', handleClick)
   }, [])
 
-  function selectCatcher(c: Catcher) {
-    onCatcherChange(c)
-    if (mode === 'all') onModeChange('was')
+  function selectPitcher(p: Pitcher) {
+    onPitcherChange(p)
     setQuery('')
     setOpen(false)
   }
 
   function clear() {
-    onCatcherChange(null)
-    onModeChange('all')
+    onPitcherChange(null)
     setQuery('')
     setResults([])
   }
 
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <span className="text-xs font-semibold text-[#888] uppercase tracking-widest">Catcher</span>
+      <span className="text-xs font-semibold text-[#888] uppercase tracking-widest">Pitcher</span>
 
-      {/* WAS / WASN'T toggle — only active when a catcher is selected */}
-      {selectedCatcher && !hideMode && (
-        <div className="flex rounded-lg overflow-hidden border border-[#d0cbc3]">
-          {(['was', 'wasnt'] as const).map((m) => (
-            <button
-              key={m}
-              onClick={() => onModeChange(m)}
-              className={`px-3 py-1.5 text-sm font-semibold transition-colors ${
-                mode === m
-                  ? 'bg-[#1a1a1a] text-white'
-                  : 'bg-white text-[#666] hover:text-[#1a1a1a]'
-              }`}
-            >
-              {m === 'was' ? 'WAS' : "WAS'NT"}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* Catcher search input */}
       <div className="relative">
         <div className="flex items-center gap-2 bg-white border border-[#d0cbc3] rounded-lg px-3 py-1.5 min-w-[220px]">
-          {selectedCatcher ? (
-            <span className="text-sm text-[#1a1a1a] font-medium flex-1">{selectedCatcher.name}</span>
+          {selectedPitcher ? (
+            <span className="text-sm text-[#1a1a1a] font-medium flex-1">{selectedPitcher.name}</span>
           ) : (
             <input
               ref={inputRef}
@@ -100,7 +75,7 @@ export function CatcherFilter({ season, selectedCatcher, mode, onCatcherChange, 
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onFocus={() => results.length > 0 && setOpen(true)}
-              placeholder="Search catcher…"
+              placeholder="Search pitcher…"
               className="bg-transparent text-sm text-[#1a1a1a] placeholder-[#aaa] outline-none flex-1 w-full"
             />
           )}
@@ -109,31 +84,27 @@ export function CatcherFilter({ season, selectedCatcher, mode, onCatcherChange, 
           </svg>
         </div>
 
-        {/* Dropdown */}
-        {open && results.length > 0 && !selectedCatcher && (
+        {open && results.length > 0 && !selectedPitcher && (
           <div
             ref={dropdownRef}
             className="absolute top-full mt-1 left-0 w-full bg-white border border-[#d0cbc3] rounded-lg shadow-lg z-50 overflow-hidden"
           >
-            {loading && (
-              <div className="px-3 py-2 text-xs text-[#999]">Loading…</div>
-            )}
-            {results.map((c) => (
+            {loading && <div className="px-3 py-2 text-xs text-[#999]">Loading…</div>}
+            {results.map((p) => (
               <button
-                key={c.mlbam_id}
-                onMouseDown={() => selectCatcher(c)}
+                key={p.mlbam_id}
+                onMouseDown={() => selectPitcher(p)}
                 className="w-full text-left px-3 py-2 text-sm text-[#1a1a1a] hover:bg-[#f5f2ed] flex items-center justify-between gap-2 transition-colors"
               >
-                <span className="font-medium">{c.name}</span>
-                {c.team && <span className="text-xs text-[#999]">{c.team}</span>}
+                <span className="font-medium">{p.name}</span>
+                {p.team && <span className="text-xs text-[#999]">{p.team}</span>}
               </button>
             ))}
           </div>
         )}
       </div>
 
-      {/* Clear */}
-      {selectedCatcher && (
+      {selectedPitcher && (
         <button
           onClick={clear}
           className="text-sm text-[#999] hover:text-[#1a1a1a] flex items-center gap-1 transition-colors"

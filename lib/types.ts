@@ -99,6 +99,12 @@ export interface Catcher {
   team: string | null
 }
 
+export interface Pitcher {
+  mlbam_id: number
+  name: string
+  team: string | null
+}
+
 export interface LeaderboardResponse {
   rows: PitcherRow[]
   total: number

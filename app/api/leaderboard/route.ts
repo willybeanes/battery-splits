@@ -101,11 +101,11 @@ async function handlePitcherTab(
   db: ReturnType<typeof createServiceClient>,
   params: {
     season: number; team: string; minBf: number; minIp: number
-    catcherId: number | null; mode: string
+    catcherId: number | null; pitcherId: number | null; mode: string
     sort: string; dir: string; page: number; exportCsv: boolean
   }
 ) {
-  const { season, team, minBf, minIp, catcherId, mode, sort, dir, page, exportCsv } = params
+  const { season, team, minBf, minIp, catcherId, pitcherId, mode, sort, dir, page, exportCsv } = params
   const from = (page - 1) * PAGE_SIZE
   const to = from + PAGE_SIZE - 1
 
@@ -121,6 +121,7 @@ async function handlePitcherTab(
       .gte('bf', minBf)
       .gte('ip', minIp)
     if (team) query = query.eq('pitcher_team', team)
+    if (pitcherId) query = query.eq('pitcher_id', pitcherId)
     query = query.order(sort, { ascending: dir === 'asc', nullsFirst: false })
     if (!exportCsv) query = (query as typeof query).range(from, to)
     const [{ data, error, count }, catcherCountMap] = await Promise.all([
@@ -205,9 +206,9 @@ async function handlePitcherTab(
 
 async function handleCatcherTab(
   db: ReturnType<typeof createServiceClient>,
-  params: { season: number; team: string; minBf: number; minIp: number; sort: string; dir: string; page: number; exportCsv: boolean }
+  params: { season: number; team: string; minBf: number; minIp: number; pitcherId: number | null; sort: string; dir: string; page: number; exportCsv: boolean }
 ) {
-  const { season, team, minBf, minIp, sort, dir, page, exportCsv } = params
+  const { season, team, minBf, minIp, pitcherId, sort, dir, page, exportCsv } = params
 
   const catcherMap = await getCatcherMap(db, season)
 
@@ -230,6 +231,7 @@ async function handleCatcherTab(
       const meta = catcherMap.get(cid)
       if (!meta) continue
       if (team && r.pitcher_team !== team) continue
+      if (pitcherId && r.pitcher_id !== pitcherId) continue
       if (!agg.has(cid)) {
         agg.set(cid, {
           catcher_id: cid, catcher_name: meta.name, catcher_team: meta.team,
@@ -264,9 +266,9 @@ async function handleCatcherTab(
 
 async function handleBatteryTab(
   db: ReturnType<typeof createServiceClient>,
-  params: { season: number; team: string; minBf: number; minIp: number; sort: string; dir: string; page: number; exportCsv: boolean }
+  params: { season: number; team: string; minBf: number; minIp: number; pitcherId: number | null; catcherId: number | null; sort: string; dir: string; page: number; exportCsv: boolean }
 ) {
-  const { season, team, minBf, minIp, sort, dir, page, exportCsv } = params
+  const { season, team, minBf, minIp, pitcherId, catcherId, sort, dir, page, exportCsv } = params
 
   const catcherMap = await getCatcherMap(db, season)
 
@@ -289,6 +291,8 @@ async function handleBatteryTab(
     .filter(r => {
       if (team && r.pitcher_team !== team) return false
       if (!catcherMap.has(r.catcher_id)) return false
+      if (pitcherId && r.pitcher_id !== pitcherId) return false
+      if (catcherId && r.catcher_id !== catcherId) return false
       // Apply min IP and min BF to the combination itself, not the pitcher's total
       if ((r.bf ?? 0) < minBf) return false
       if (Number(r.ip ?? 0) < minIp) return false
@@ -323,6 +327,8 @@ export async function GET(req: NextRequest) {
   const minIp  = parseFloat(searchParams.get('min_ip') ?? '0')
   const catcherIdParam = searchParams.get('catcher_id')
   const catcherId = catcherIdParam ? parseInt(catcherIdParam) : null
+  const pitcherIdParam = searchParams.get('pitcher_id')
+  const pitcherId = pitcherIdParam ? parseInt(pitcherIdParam) : null
   const mode   = searchParams.get('mode') ?? 'all'
   const sort   = searchParams.get('sort') ?? 'fip'
   const dir    = (searchParams.get('dir') ?? 'asc') as 'asc' | 'desc'
@@ -331,9 +337,9 @@ export async function GET(req: NextRequest) {
 
   const db = createServiceClient()
 
-  if (tab === 'pitcher') return handlePitcherTab(db, { season, team, minBf, minIp, catcherId, mode, sort, dir, page, exportCsv })
-  if (tab === 'catcher') return handleCatcherTab(db, { season, team, minBf, minIp, sort, dir, page, exportCsv })
-  if (tab === 'battery') return handleBatteryTab(db, { season, team, minBf, minIp, sort, dir, page, exportCsv })
+  if (tab === 'pitcher') return handlePitcherTab(db, { season, team, minBf, minIp, catcherId, pitcherId, mode, sort, dir, page, exportCsv })
+  if (tab === 'catcher') return handleCatcherTab(db, { season, team, minBf, minIp, pitcherId, sort, dir, page, exportCsv })
+  if (tab === 'battery') return handleBatteryTab(db, { season, team, minBf, minIp, pitcherId, catcherId, sort, dir, page, exportCsv })
 
   return NextResponse.json({ error: 'Invalid tab' }, { status: 400 })
 }

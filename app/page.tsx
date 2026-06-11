@@ -3,11 +3,12 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  Season, FilterMode, Catcher, SortDir, TabName,
+  Season, FilterMode, Catcher, Pitcher, SortDir, TabName,
   LeaderboardResponse, CatcherLeaderboardResponse, BatteryLeaderboardResponse,
 } from '@/lib/types'
 import { SeasonToggle }    from '@/components/SeasonToggle'
 import { CatcherFilter }   from '@/components/CatcherFilter'
+import { PitcherFilter }   from '@/components/PitcherFilter'
 import { TeamFilter }      from '@/components/TeamFilter'
 import { MinBfFilter }          from '@/components/MinBfFilter'
 import { MinIpFilter, QUALIFIED_SENTINEL } from '@/components/MinIpFilter'
@@ -33,6 +34,7 @@ function HomeContent() {
       : (sp.get('tab') === 'battery' ? 0 : QUALIFIED_SENTINEL)
   )
   const [catcher, setCatcher] = useState<Catcher | null>(null)
+  const [pitcher, setPitcher] = useState<Pitcher | null>(null)
   const [mode,    setMode]    = useState<FilterMode>((sp.get('mode') as FilterMode) ?? 'all')
   const [sortCol, setSortCol] = useState(sp.get('sort') ?? 'fip')
   const [sortDir, setSortDir] = useState<SortDir>((sp.get('dir') as SortDir) ?? 'asc')
@@ -53,10 +55,11 @@ function HomeContent() {
     if (sortDir !== 'asc')            params.set('dir', sortDir)
     if (page !== 1)                   params.set('page', String(page))
     if (catcher)                      params.set('catcher_id', String(catcher.mlbam_id))
+    if (pitcher)                      params.set('pitcher_id', String(pitcher.mlbam_id))
     if (mode !== 'all')               params.set('mode', mode)
     const qs = params.toString()
     router.replace(qs ? `?${qs}` : '/', { scroll: false })
-  }, [tab, season, team, minBf, minIp, catcher?.mlbam_id, mode, sortCol, sortDir, page])
+  }, [tab, season, team, minBf, minIp, catcher?.mlbam_id, pitcher?.mlbam_id, mode, sortCol, sortDir, page])
 
   useEffect(() => {
     let alive = true
@@ -66,10 +69,11 @@ function HomeContent() {
       min_ip: String(minIp === QUALIFIED_SENTINEL ? qualifiedIp(season) : minIp),
       sort: sortCol, dir: sortDir, page: String(page),
     })
-    if (tab === 'pitcher' && catcher) {
+    if (catcher) {
       params.set('catcher_id', String(catcher.mlbam_id))
-      params.set('mode', mode)
+      if (tab === 'pitcher') params.set('mode', mode)
     }
+    if (pitcher) params.set('pitcher_id', String(pitcher.mlbam_id))
 
     setLoading(true)
     setData(null)
@@ -91,7 +95,7 @@ function HomeContent() {
 
     return () => { alive = false }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, season, team, minBf, minIp, catcher?.mlbam_id, mode, sortCol, sortDir, page])
+  }, [tab, season, team, minBf, minIp, catcher?.mlbam_id, pitcher?.mlbam_id, mode, sortCol, sortDir, page])
 
   // Reset sort + page when tab changes
   function handleTabChange(t: TabName) {
@@ -100,6 +104,7 @@ function HomeContent() {
     setSortDir('asc')
     setPage(1)
     setCatcher(null)
+    setPitcher(null)
     setMode('all')
     // Battery tab doesn't support Qualified — reset to 0 if it was selected
     if (t === 'battery' && minIp === QUALIFIED_SENTINEL) setMinIp(0)
@@ -116,7 +121,7 @@ function HomeContent() {
   }
 
   function handleSeasonChange(s: Season) {
-    setSeason(s); setCatcher(null); setMode('all'); setMinIp(QUALIFIED_SENTINEL); setPage(1)
+    setSeason(s); setCatcher(null); setPitcher(null); setMode('all'); setMinIp(QUALIFIED_SENTINEL); setPage(1)
   }
 
   function subtitle() {
@@ -139,10 +144,11 @@ function HomeContent() {
       min_ip: String(minIp === QUALIFIED_SENTINEL ? qualifiedIp(season) : minIp),
       sort: sortCol, dir: sortDir, page: '1', export: '1',
     })
-    if (tab === 'pitcher' && catcher) {
+    if (catcher) {
       params.set('catcher_id', String(catcher.mlbam_id))
-      params.set('mode', mode)
+      if (tab === 'pitcher') params.set('mode', mode)
     }
+    if (pitcher) params.set('pitcher_id', String(pitcher.mlbam_id))
     return `/api/leaderboard?${params}`
   }
 
@@ -173,17 +179,32 @@ function HomeContent() {
             <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />
             <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />
             <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} hideQualified={tab === 'battery'} />
+            <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
+            {tab !== 'catcher' && (
+              <PitcherFilter
+                season={season}
+                selectedPitcher={pitcher}
+                onPitcherChange={p => { setPitcher(p); setPage(1) }}
+              />
+            )}
+            {tab !== 'pitcher' && (
+              <CatcherFilter
+                season={season}
+                selectedCatcher={catcher}
+                mode={mode}
+                onCatcherChange={c => { setCatcher(c); setPage(1) }}
+                onModeChange={m => { setMode(m); setPage(1) }}
+                hideMode
+              />
+            )}
             {tab === 'pitcher' && (
-              <>
-                <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
-                <CatcherFilter
-                  season={season}
-                  selectedCatcher={catcher}
-                  mode={mode}
-                  onCatcherChange={c => { setCatcher(c); setPage(1) }}
-                  onModeChange={m => { setMode(m); setPage(1) }}
-                />
-              </>
+              <CatcherFilter
+                season={season}
+                selectedCatcher={catcher}
+                mode={mode}
+                onCatcherChange={c => { setCatcher(c); setPage(1) }}
+                onModeChange={m => { setMode(m); setPage(1) }}
+              />
             )}
           </div>
 
