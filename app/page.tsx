@@ -27,7 +27,11 @@ function HomeContent() {
   const [season,  setSeason]  = useState<Season>((parseInt(sp.get('season') ?? '2026') as Season))
   const [team,    setTeam]    = useState(sp.get('team') ?? '')
   const [minBf,   setMinBf]   = useState(parseInt(sp.get('min_bf') ?? '0'))
-  const [minIp,   setMinIp]   = useState(sp.get('min_ip') !== null ? parseFloat(sp.get('min_ip')!) : QUALIFIED_SENTINEL)
+  const [minIp,   setMinIp]   = useState(
+    sp.get('min_ip') !== null
+      ? parseFloat(sp.get('min_ip')!)
+      : (sp.get('tab') === 'battery' ? 0 : QUALIFIED_SENTINEL)
+  )
   const [catcher, setCatcher] = useState<Catcher | null>(null)
   const [mode,    setMode]    = useState<FilterMode>((sp.get('mode') as FilterMode) ?? 'all')
   const [sortCol, setSortCol] = useState(sp.get('sort') ?? 'fip')

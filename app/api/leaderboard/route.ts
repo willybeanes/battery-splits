@@ -268,14 +268,24 @@ async function handleBatteryTab(
 ) {
   const { season, team, minBf, minIp, sort, dir, page, exportCsv } = params
 
-  const [catcherMap, { data: allRows, error }] = await Promise.all([
-    getCatcherMap(db, season),
-    db.from('pitcher_catcher_stats').select('*').eq('season', season)
-      .neq('catcher_id', 0).limit(10000),
-  ])
-  if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+  const catcherMap = await getCatcherMap(db, season)
 
-  const rows = (allRows ?? [])
+  const allRows: Record<string, unknown>[] = []
+  const PAGE = 1000
+  let from = 0
+  while (true) {
+    const { data: chunk, error } = await db
+      .from('pitcher_catcher_stats').select('*')
+      .eq('season', season).neq('catcher_id', 0)
+      .range(from, from + PAGE - 1)
+    if (error) return NextResponse.json({ error: error.message }, { status: 500 })
+    if (!chunk || chunk.length === 0) break
+    allRows.push(...chunk)
+    if (chunk.length < PAGE) break
+    from += PAGE
+  }
+
+  const rows = allRows
     .filter(r => {
       if (team && r.pitcher_team !== team) return false
       if (!catcherMap.has(r.catcher_id)) return false
