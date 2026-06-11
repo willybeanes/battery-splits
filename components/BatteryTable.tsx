@@ -25,10 +25,9 @@ interface Props {
   onSort: (col: SortCol) => void
   onPage: (p: number) => void
   loading: boolean
-  showChem?: boolean
 }
 
-export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, onSort, onPage, loading, showChem = true }: Props) {
+export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, onSort, onPage, loading }: Props) {
   const totalPages = Math.ceil(total / pageSize)
   const startRank = (page - 1) * pageSize + 1
 
@@ -49,13 +48,13 @@ export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, on
               <StatHeader col="k_pct" label="K%"   sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
               <StatHeader col="bb_pct" label="BB%" sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
               <StatHeader col="fip"        label="FIP"  sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
-              {showChem && <StatHeader col="chem_score" label="Chem" sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Chemistry Score: percentile rank of (pitcher season FIP − combo FIP). Requires 20 IP together. 100 = catcher most helps pitcher's FIP." />}
+              <StatHeader col="chem_score" label="Chem" sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Chemistry Score: percentile rank of (pitcher season FIP − combo FIP). Requires 20 IP together. 100 = catcher most helps pitcher's FIP." />
             </tr>
           </thead>
           <tbody className={loading ? 'opacity-50' : ''}>
             {rows.length === 0 && !loading && (
               <tr>
-                <td colSpan={showChem ? 12 : 11} className="px-4 py-12 text-center text-[#aaa] text-sm">
+                <td colSpan={12} className="px-4 py-12 text-center text-[#aaa] text-sm">
                   No data available for this filter.
                 </td>
               </tr>
@@ -76,14 +75,12 @@ export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, on
                 <td className="px-3 py-2.5 text-right font-mono text-sm">
                   <span className={fipColor(row.fip)}>{fmt(row.fip)}</span>
                 </td>
-                {showChem && (
-                  <td className="px-3 py-2.5 text-right font-mono text-sm">
-                    {row.chem_score == null
-                      ? <span className="text-[#ccc]">—</span>
-                      : <span className="font-semibold" style={{ color: chemColor(row.chem_score) }}>{row.chem_score}</span>
-                    }
-                  </td>
-                )}
+                <td className="px-3 py-2.5 text-right font-mono text-sm">
+                  {row.chem_score == null
+                    ? <span className="text-[#ccc]">—</span>
+                    : <span className="font-semibold" style={{ color: chemColor(row.chem_score) }}>{row.chem_score}</span>
+                  }
+                </td>
               </tr>
             ))}
           </tbody>

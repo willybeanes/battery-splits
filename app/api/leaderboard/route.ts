@@ -283,7 +283,6 @@ async function handleBatteryTab(
   params: { seasons: number[]; team: string; minBf: number; minIp: number; pitcherId: number | null; catcherId: number | null; sort: string; dir: string; page: number; exportCsv: boolean }
 ) {
   const { seasons, team, minBf, minIp, pitcherId, catcherId, sort, dir, page, exportCsv } = params
-  const singleSeason = seasons.length === 1
   const season = Math.max(...seasons)
 
   const [catcherMap, rawRows] = await Promise.all([
@@ -311,23 +310,25 @@ async function handleBatteryTab(
     a.er   += (r.er   as number) ?? 0
   }
 
-  // Compute chem score only for single-season (pitcher "season FIP" is ambiguous across seasons)
-  let pitcherFipMap = new Map<number, number>()
+  // Build pitcher aggregate FIP map from totals rows (works for single and multi-season)
+  const pitcherTotalsRaw = await fetchStatRows(db, seasons, 'zero')
+  const pitcherFipMap = new Map<number, number>()
+  for (const t of aggregatePitcherTotals(pitcherTotalsRaw)) {
+    if (t.fip != null) pitcherFipMap.set(t.pitcher_id, t.fip)
+  }
+
+  // Normalize diffs across all qualifying combos (≥20 IP together)
   let chemMean = 0, chemStd = 1
-  if (singleSeason) {
-    const { data: pitcherTotals } = await db.from('pitcher_catcher_stats').select('pitcher_id, fip').eq('season', season).eq('catcher_id', 0)
-    for (const r of pitcherTotals ?? []) { if (r.fip != null) pitcherFipMap.set(r.pitcher_id, r.fip) }
-    const diffs: number[] = []
-    for (const a of agg.values()) {
-      const ip = outsToIp(a.outs)
-      const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip).fip
-      const seasonFip = pitcherFipMap.get(a.pitcher_id)
-      if (ip >= 20 && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
-    }
-    if (diffs.length > 1) {
-      chemMean = diffs.reduce((s, d) => s + d, 0) / diffs.length
-      chemStd = Math.sqrt(diffs.reduce((s, d) => s + (d - chemMean) ** 2, 0) / diffs.length) || 1
-    }
+  const diffs: number[] = []
+  for (const a of agg.values()) {
+    const ip = outsToIp(a.outs)
+    const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip).fip
+    const seasonFip = pitcherFipMap.get(a.pitcher_id)
+    if (ip >= 20 && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
+  }
+  if (diffs.length > 1) {
+    chemMean = diffs.reduce((s, d) => s + d, 0) / diffs.length
+    chemStd = Math.sqrt(diffs.reduce((s, d) => s + (d - chemMean) ** 2, 0) / diffs.length) || 1
   }
 
   function normalCdf(z: number): number {
@@ -343,7 +344,7 @@ async function handleBatteryTab(
       const meta = catcherMap.get(a.catcher_id)
       const rates = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip)
       let chem_score: number | null = null
-      if (singleSeason && ip >= 20 && rates.fip != null) {
+      if (ip >= 20 && rates.fip != null) {
         const seasonFip = pitcherFipMap.get(a.pitcher_id)
         if (seasonFip != null) {
           const z = ((seasonFip - rates.fip) - chemMean) / chemStd
