@@ -750,6 +750,72 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
             "runs":         runs,
         })
 
+    # Replace run-based ER proxy with official earnedRuns from boxscore,
+    # allocated to catchers proportionally by BF share per pitcher.
+    official_er: dict[int, int] = {}  # pitcher_id → official earnedRuns
+    for side in ("away", "home"):
+        for p in bs["teams"][side].get("players", {}).values():
+            pid = p["person"]["id"]
+            er  = p.get("stats", {}).get("pitching", {}).get("earnedRuns")
+            if er is not None:
+                official_er[pid] = int(er)
+
+    if official_er:
+        # Count BF per (pitcher, catcher) from this game's PAs
+        from collections import defaultdict
+        bf_map: dict[tuple[int,int], int] = defaultdict(int)
+        for pa in pas:
+            if pa["is_batter_pa"]:
+                bf_map[(pa["pitcher_id"], pa["catcher_id"])] += 1
+
+        # BF total per pitcher
+        bf_total: dict[int, int] = defaultdict(int)
+        for (pid, _), bf in bf_map.items():
+            bf_total[pid] += bf
+
+        # Allocate official ER to each PA's runs field via a correction pass
+        # Strategy: zero out run-based ER on all PAs, then add corrected ER
+        # as a synthetic entry per (pitcher, catcher) combination.
+        for pa in pas:
+            pa["runs"] = 0  # clear run-based ER
+
+        for (pid, cid), bf in bf_map.items():
+            total_bf = bf_total.get(pid, 0)
+            if total_bf == 0:
+                continue
+            er = official_er.get(pid, 0)
+            # Proportional allocation, rounding down; remainder goes to highest-BF catcher
+            allocated = (er * bf) // total_bf
+            if allocated:
+                pas.append({
+                    "season":       None,
+                    "pitcher_id":   pid,
+                    "catcher_id":   cid,
+                    "pitcher_team": player_team.get(pid),
+                    "is_batter_pa": False,
+                    "outs": 0, "hits": 0, "hr": 0, "bb": 0, "hbp": 0, "so": 0,
+                    "runs": allocated,
+                })
+
+        # Distribute any remainder (from floor division) to the catcher with most BF
+        for pid, er in official_er.items():
+            pairs = [(cid, bf) for (p, cid), bf in bf_map.items() if p == pid]
+            if not pairs:
+                continue
+            allocated_sum = sum((er * bf) // bf_total[pid] for _, bf in pairs)
+            remainder = er - allocated_sum
+            if remainder:
+                best_cid = max(pairs, key=lambda x: x[1])[0]
+                pas.append({
+                    "season":       None,
+                    "pitcher_id":   pid,
+                    "catcher_id":   best_cid,
+                    "pitcher_team": player_team.get(pid),
+                    "is_batter_pa": False,
+                    "outs": 0, "hits": 0, "hr": 0, "bb": 0, "hbp": 0, "so": 0,
+                    "runs": remainder,
+                })
+
     return pas, player_names
 
 def ingest_mlbapi_season(season: int, db: Client):
