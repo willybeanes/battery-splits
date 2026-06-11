@@ -3,7 +3,7 @@ Battery Splits — unified ingest script.
 
 Backends
 --------
-  Retrosheet  (2000–2025): official play-by-play event files.
+  Retrosheet  (2008–2025): official play-by-play event files.
                Outs are counted from official event codes → IP matches
                Baseball Reference exactly.
   MLB Stats API (2026+):   real-time official play-by-play.
@@ -40,12 +40,12 @@ load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env.local")
 SUPABASE_URL         = os.environ.get("SUPABASE_URL") or os.environ["NEXT_PUBLIC_SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 
-RETROSHEET_SEASONS   = list(range(2000, 2026))   # 2000–2025  (official Retrosheet data)
+RETROSHEET_SEASONS   = list(range(2008, 2026))   # 2008–2025  (official Retrosheet data)
 MLBAPI_SEASONS       = [2026]                     # 2026+      (MLB Stats API)
 ALL_SEASONS          = RETROSHEET_SEASONS + MLBAPI_SEASONS
 
 # Seasons whose data is complete; skip re-ingest unless --force is passed.
-COMPLETED_SEASONS    = set(range(2000, 2026))     # all Retrosheet seasons are complete
+COMPLETED_SEASONS    = set(range(2008, 2026))     # all Retrosheet seasons are complete
 
 FIP_CONSTANT = 3.15
 CACHE_DIR    = Path(__file__).parent / "cache"
@@ -55,7 +55,7 @@ CACHE_DIR.mkdir(exist_ok=True)
 
 RETRO_TEAM = {
     "ANA": "LAA", "LAA": "LAA", "CAL": "LAA",
-    "ARI": "ARI", "ATL": "ATL",
+    "ARI": "AZ",  "ATL": "ATL",
     "BAL": "BAL", "BOS": "BOS",
     "CHA": "CWS", "CHN": "CHC",
     "CIN": "CIN", "CLE": "CLE",
@@ -379,6 +379,143 @@ def parse_retro_event(raw: str) -> dict:
 
     return r
 
+# ── MLB API schedule + boxscore helpers (used by both backends) ───────────────
+
+def fetch_season_schedule(season: int) -> dict[tuple, int]:
+    """
+    Returns {(date_str, home_abbr, game_number): gamePk} for all Final games.
+    Cached on disk per season.
+    """
+    cache = CACHE_DIR / f"schedule_{season}.json"
+    if cache.exists():
+        raw = json.loads(cache.read_text())
+        return {(p[0], p[1], int(p[2])): v for k, v in raw.items() for p in [k.split("|")]}
+
+    data = mlb_get(
+        f"/api/v1/schedule?sportId=1&season={season}&gameType=R&hydrate=team"
+    )
+    result: dict[tuple, int] = {}
+    for d in data.get("dates", []):
+        for g in d.get("games", []):
+            if g.get("status", {}).get("abstractGameState") != "Final":
+                continue
+            dt       = g.get("officialDate", "")
+            home_abbr = g["teams"]["home"].get("team", {}).get("abbreviation", "")
+            game_num  = g.get("gameNumber", 1)
+            result[(dt, home_abbr, game_num)] = g["gamePk"]
+
+    cache.write_text(json.dumps({f"{k[0]}|{k[1]}|{k[2]}": v for k, v in result.items()}))
+    return result
+
+
+def fetch_boxscore_er(game_pk: int) -> dict[int, int]:
+    """
+    Return {pitcher_mlbam_id: earnedRuns} for a game, cached on disk.
+    """
+    cache = CACHE_DIR / f"bs_er_{game_pk}.json"
+    if cache.exists():
+        return {int(k): v for k, v in json.loads(cache.read_text()).items()}
+
+    try:
+        bs = mlb_get(f"/api/v1/game/{game_pk}/boxscore")
+    except Exception:
+        return {}
+
+    er_map: dict[int, int] = {}
+    for side in ("away", "home"):
+        for p in bs["teams"][side].get("players", {}).values():
+            pid = p["person"]["id"]
+            er  = p.get("stats", {}).get("pitching", {}).get("earnedRuns")
+            if er is not None:
+                er_map[pid] = int(er)
+
+    cache.write_text(json.dumps(er_map))
+    return er_map
+
+
+def apply_official_er(
+    pas: list[dict],
+    season: int,
+    schedule: dict[tuple, int],
+) -> None:
+    """
+    Replace run-based ER proxy with official earnedRuns from MLB API boxscores.
+    Groups PAs by game_id, looks up gamePk via schedule, fetches ER per pitcher,
+    and allocates to catchers proportionally by BF. Modifies pas in-place.
+    """
+    # Zero out run-based ER
+    for pa in pas:
+        pa["runs"] = 0
+
+    # Group BF by (game_id, pitcher_id, catcher_id)
+    game_bf: dict[str, dict[tuple[int,int], int]] = defaultdict(lambda: defaultdict(int))
+    game_pitcher_team: dict[str, dict[int, str]] = defaultdict(dict)
+    for pa in pas:
+        gid = pa.get("game_id")
+        if not gid or not pa.get("is_batter_pa"):
+            continue
+        game_bf[gid][(pa["pitcher_id"], pa["catcher_id"])] += 1
+        game_pitcher_team[gid][pa["pitcher_id"]] = pa.get("pitcher_team") or ""
+
+    for game_id, bf_map in game_bf.items():
+        # Parse game_id → date + home team abbr + game number
+        # Format: TTTYYYYMMDDG  e.g. LAN202104090
+        if len(game_id) < 12:
+            continue
+        home_retro = game_id[:3]
+        y, mo, d, g = game_id[3:7], game_id[7:9], game_id[9:11], game_id[11]
+        date_str  = f"{y}-{mo}-{d}"
+        home_abbr = RETRO_TEAM.get(home_retro, home_retro)
+        # Retrosheet: 0=single game, 1=first DH, 2=second DH → MLB: 1 or 2
+        game_num  = 2 if g == "2" else 1
+
+        game_pk = schedule.get((date_str, home_abbr, game_num))
+        if not game_pk:
+            continue
+
+        official_er = fetch_boxscore_er(game_pk)
+        if not official_er:
+            continue
+
+        bf_total: dict[int, int] = defaultdict(int)
+        for (pid, _), bf in bf_map.items():
+            bf_total[pid] += bf
+
+        pteam = game_pitcher_team[game_id]
+
+        for (pid, cid), bf in bf_map.items():
+            total_bf = bf_total.get(pid, 0)
+            if not total_bf:
+                continue
+            er = official_er.get(pid, 0)
+            allocated = (er * bf) // total_bf
+            if allocated:
+                pas.append({
+                    "season": season, "pitcher_id": pid, "catcher_id": cid,
+                    "pitcher_team": pteam.get(pid),
+                    "is_batter_pa": False, "game_id": game_id,
+                    "outs": 0, "hits": 0, "hr": 0, "bb": 0, "hbp": 0, "so": 0,
+                    "runs": allocated,
+                })
+
+        # Distribute integer remainder to highest-BF catcher per pitcher
+        for pid, er in official_er.items():
+            pairs = [(cid, bf) for (p, cid), bf in bf_map.items() if p == pid]
+            if not pairs:
+                continue
+            allocated_sum = sum((er * bf) // bf_total[pid] for _, bf in pairs)
+            remainder = er - allocated_sum
+            if remainder:
+                best_cid = max(pairs, key=lambda x: x[1])[0]
+                pas.append({
+                    "season": season, "pitcher_id": pid, "catcher_id": best_cid,
+                    "pitcher_team": pteam.get(pid),
+                    "is_batter_pa": False, "game_id": game_id,
+                    "outs": 0, "hits": 0, "hr": 0, "bb": 0, "hbp": 0, "so": 0,
+                    "runs": remainder,
+                })
+
+
 # ── Retrosheet season ingest ──────────────────────────────────────────────────
 
 def download_retrosheet(season: int) -> Path:
@@ -412,6 +549,7 @@ def parse_retrosheet_season(season: int, zip_path: Path, id_map: dict) -> tuple[
             with zf.open(ev_file) as raw:
                 lines = raw.read().decode("latin-1").splitlines()
 
+            game_id   = None
             vis_team  = None
             home_team = None
             # lineup[team_idx][position] = retro_id  (team 0=visitor, 1=home)
@@ -426,6 +564,7 @@ def parse_retrosheet_season(season: int, zip_path: Path, id_map: dict) -> tuple[
                 rtype = rec[0].lower()
 
                 if rtype == "id":
+                    game_id   = rec[1].strip() if len(rec) > 1 else None
                     vis_team  = None
                     home_team = None
                     lineup    = {0: {}, 1: {}}
@@ -479,6 +618,7 @@ def parse_retrosheet_season(season: int, zip_path: Path, id_map: dict) -> tuple[
                         "pitcher_id":   pitcher_mlbam,
                         "catcher_id":   catcher_mlbam,
                         "pitcher_team": p_team,
+                        "game_id":      game_id,
                         **ev,
                     })
 
@@ -553,7 +693,11 @@ def ingest_retrosheet_season(season: int, db: Client, id_map: dict):
         print("  No PA data found.")
         return
 
-    print(f"  {len(pas):,} play records → aggregating…")
+    print(f"  {len(pas):,} play records — fetching official ER from MLB API…", flush=True)
+    schedule = fetch_season_schedule(season)
+    apply_official_er(pas, season, schedule)
+
+    print(f"  Aggregating…", flush=True)
     rows   = aggregate_pas(pas)
     totals = build_totals(rows)
 
