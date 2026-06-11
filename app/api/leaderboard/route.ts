@@ -272,7 +272,8 @@ async function handleBatteryTab(
 
   const catcherMap = await getCatcherMap(db, season)
 
-  const allRows: Record<string, unknown>[] = []
+  type StatRow = { pitcher_id: number; pitcher_name: string; pitcher_team: string | null; catcher_id: number; bf: number; ip: number; hits: number; hr: number; bb: number; so: number; er: number; era: number | null; whip: number | null; k_pct: number | null; bb_pct: number | null; fip: number | null; xfip: number | null }
+  const allRows: StatRow[] = []
   const PAGE = 1000
   let from = 0
   while (true) {
