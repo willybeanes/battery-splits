@@ -39,9 +39,10 @@ function HomeContent() {
   const [sortCol, setSortCol] = useState(sp.get('sort') ?? 'fip')
   const [sortDir, setSortDir] = useState<SortDir>((sp.get('dir') as SortDir) ?? 'asc')
   const [page,    setPage]    = useState(Math.max(1, parseInt(sp.get('page') ?? '1')))
-  const [data,    setData]    = useState<AnyResponse | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [error,   setError]   = useState<string | null>(null)
+  const [data,       setData]       = useState<AnyResponse | null>(null)
+  const [loading,    setLoading]    = useState(true)
+  const [error,      setError]      = useState<string | null>(null)
+  const [showSearch, setShowSearch] = useState(false)
 
   // Sync filter state to URL so links are shareable/bookmarkable
   useEffect(() => {
@@ -174,43 +175,54 @@ function HomeContent() {
 
           {/* Filter bar */}
           <div className="px-5 pt-4 pb-3 border-b border-[#ece8e1] flex flex-col gap-3">
-            {/* Row 1: season / team / thresholds */}
+            {/* Row 1: season / team / thresholds + search toggle */}
             <div className="flex flex-wrap items-center gap-4">
               <SeasonToggle value={season} onChange={handleSeasonChange} />
               <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
               <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />
               <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />
               <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} hideQualified={tab === 'battery'} />
+              <button
+                onClick={() => setShowSearch(s => !s)}
+                className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#888] hover:text-[#1a1a1a] transition-colors rounded-lg hover:bg-[#f5f2ed]"
+              >
+                Search
+                <svg className={`w-3.5 h-3.5 transition-transform ${showSearch ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
+                </svg>
+              </button>
             </div>
-            {/* Row 2: pitcher / catcher search */}
-            <div className="flex flex-wrap items-center gap-4">
-              {tab !== 'catcher' && (
-                <PitcherFilter
-                  season={season}
-                  selectedPitcher={pitcher}
-                  onPitcherChange={p => { setPitcher(p); setPage(1) }}
-                />
-              )}
-              {tab !== 'pitcher' && (
-                <CatcherFilter
-                  season={season}
-                  selectedCatcher={catcher}
-                  mode={mode}
-                  onCatcherChange={c => { setCatcher(c); setPage(1) }}
-                  onModeChange={m => { setMode(m); setPage(1) }}
-                  hideMode
-                />
-              )}
-              {tab === 'pitcher' && (
-                <CatcherFilter
-                  season={season}
-                  selectedCatcher={catcher}
-                  mode={mode}
-                  onCatcherChange={c => { setCatcher(c); setPage(1) }}
-                  onModeChange={m => { setMode(m); setPage(1) }}
-                />
-              )}
-            </div>
+            {/* Row 2: pitcher / catcher search (collapsible) */}
+            {showSearch && (
+              <div className="flex flex-wrap items-center gap-4">
+                {tab !== 'catcher' && (
+                  <PitcherFilter
+                    season={season}
+                    selectedPitcher={pitcher}
+                    onPitcherChange={p => { setPitcher(p); setPage(1) }}
+                  />
+                )}
+                {tab !== 'pitcher' && (
+                  <CatcherFilter
+                    season={season}
+                    selectedCatcher={catcher}
+                    mode={mode}
+                    onCatcherChange={c => { setCatcher(c); setPage(1) }}
+                    onModeChange={m => { setMode(m); setPage(1) }}
+                    hideMode
+                  />
+                )}
+                {tab === 'pitcher' && (
+                  <CatcherFilter
+                    season={season}
+                    selectedCatcher={catcher}
+                    mode={mode}
+                    onCatcherChange={c => { setCatcher(c); setPage(1) }}
+                    onModeChange={m => { setMode(m); setPage(1) }}
+                  />
+                )}
+              </div>
+            )}
           </div>
 
           {/* Table header line */}
