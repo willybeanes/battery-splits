@@ -79,6 +79,20 @@ export interface PitcherSplitRow {
   xfip: number | null
 }
 
+export interface CatcherSplitRow {
+  pitcher_id: number
+  pitcher_name: string
+  pitcher_team: string | null
+  bf: number
+  ip: number
+  era: number | null
+  whip: number | null
+  k_pct: number | null
+  bb_pct: number | null
+  fip: number | null
+  xfip: number | null
+}
+
 export interface Catcher {
   mlbam_id: number
   name: string

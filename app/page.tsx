@@ -224,7 +224,7 @@ function HomeContent() {
                 total={total} page={page} pageSize={50}
                 sortCol={sortCol} sortDir={sortDir}
                 onSort={handleSort} onPage={setPage}
-                loading={loading}
+                loading={loading} season={season}
               />
             )}
             {tab === 'battery' && (
