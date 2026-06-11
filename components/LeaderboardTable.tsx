@@ -15,20 +15,20 @@ interface Props {
   onSort: (col: SortCol) => void
   onPage: (p: number) => void
   loading: boolean
-  season: number
+  seasons: number[]
 }
 
-function SplitRows({ pitcherId, season }: { pitcherId: number; season: number }) {
+function SplitRows({ pitcherId, seasons }: { pitcherId: number; seasons: number[] }) {
   const [splits, setSplits] = useState<PitcherSplitRow[] | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setLoading(true)
-    fetch(`/api/pitcher-splits?pitcher_id=${pitcherId}&season=${season}`)
+    fetch(`/api/pitcher-splits?pitcher_id=${pitcherId}&seasons=${seasons.join(',')}`)
       .then(r => r.json())
       .then(data => { setSplits(data); setLoading(false) })
       .catch(() => { setSplits([]); setLoading(false) })
-  }, [pitcherId, season])
+  }, [pitcherId, seasons.join(',')])
 
   if (loading) {
     return (
@@ -67,7 +67,7 @@ function SplitRows({ pitcherId, season }: { pitcherId: number; season: number })
 }
 
 export function LeaderboardTable({
-  rows, total, page, pageSize, sortCol, sortDir, onSort, onPage, loading, season
+  rows, total, page, pageSize, sortCol, sortDir, onSort, onPage, loading, seasons
 }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const totalPages = Math.ceil(total / pageSize)
@@ -132,7 +132,7 @@ export function LeaderboardTable({
                       <span className={fipColor(row.fip)}>{fmt(row.fip)}</span>
                     </td>
                   </tr>
-                  {isExpanded && <SplitRows pitcherId={row.pitcher_id} season={season} />}
+                  {isExpanded && <SplitRows pitcherId={row.pitcher_id} seasons={seasons} />}
                 </Fragment>
               )
             })}

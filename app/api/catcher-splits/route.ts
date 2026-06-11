@@ -1,10 +1,22 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 
+function ipToOuts(ip: number): number {
+  const innings = Math.floor(ip)
+  return innings * 3 + Math.round((ip - innings) * 10)
+}
+function outsToIp(outs: number): number {
+  return Math.floor(outs / 3) + (outs % 3) / 10
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const catcher_id = parseInt(searchParams.get('catcher_id') ?? '0')
-  const season = parseInt(searchParams.get('season') ?? '2026')
+  const seasonsRaw = searchParams.get('seasons')
+  const seasonRaw  = searchParams.get('season')
+  const seasons = seasonsRaw
+    ? seasonsRaw.split(',').map(Number).filter(n => !isNaN(n) && n > 0)
+    : [parseInt(seasonRaw ?? '2026')]
 
   if (!catcher_id) return NextResponse.json([], { status: 400 })
 
@@ -13,19 +25,40 @@ export async function GET(req: NextRequest) {
     .from('pitcher_catcher_stats')
     .select('*')
     .eq('catcher_id', catcher_id)
-    .eq('season', season)
+    .in('season', seasons)
     .neq('catcher_id', 0)
-    .order('bf', { ascending: false })
 
-  const rows = (splits ?? []).map(r => ({
-    pitcher_id:   r.pitcher_id,
-    pitcher_name: r.pitcher_name ?? `ID ${r.pitcher_id}`,
-    pitcher_team: r.pitcher_team ?? null,
-    bf: r.bf, ip: r.ip,
-    era: r.era, whip: r.whip,
-    k_pct: r.k_pct, bb_pct: r.bb_pct,
-    fip: r.fip, xfip: r.xfip,
-  }))
+  // Aggregate across seasons by pitcher_id
+  const agg = new Map<number, { pitcher_id: number; pitcher_name: string; pitcher_team: string | null; bf: number; outs: number; hits: number; hr: number; bb: number; so: number; er: number }>()
+  for (const r of splits ?? []) {
+    const pid = r.pitcher_id
+    if (!agg.has(pid)) agg.set(pid, { pitcher_id: pid, pitcher_name: r.pitcher_name ?? `ID ${pid}`, pitcher_team: r.pitcher_team ?? null, bf: 0, outs: 0, hits: 0, hr: 0, bb: 0, so: 0, er: 0 })
+    const a = agg.get(pid)!
+    a.bf   += r.bf   ?? 0
+    a.outs += ipToOuts(Number(r.ip ?? 0))
+    a.hits += r.hits ?? 0
+    a.hr   += r.hr   ?? 0
+    a.bb   += r.bb   ?? 0
+    a.so   += r.so   ?? 0
+    a.er   += r.er   ?? 0
+  }
+
+  const rows = [...agg.values()]
+    .sort((a, b) => b.bf - a.bf)
+    .map(a => {
+      const ip = outsToIp(a.outs)
+      return {
+        pitcher_id:   a.pitcher_id,
+        pitcher_name: a.pitcher_name,
+        pitcher_team: a.pitcher_team,
+        bf: a.bf, ip,
+        era:   a.outs > 0 ? Math.round((a.er / (a.outs / 3)) * 9 * 100) / 100 : null,
+        whip:  a.outs > 0 ? Math.round(((a.hits + a.bb) / (a.outs / 3)) * 1000) / 1000 : null,
+        k_pct: a.bf   > 0 ? Math.round((a.so / a.bf) * 1000) / 10 : null,
+        bb_pct:a.bf   > 0 ? Math.round((a.bb / a.bf) * 1000) / 10 : null,
+        fip: null, xfip: null,
+      }
+    })
 
   return NextResponse.json(rows)
 }

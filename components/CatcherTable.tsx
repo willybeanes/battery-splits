@@ -15,20 +15,20 @@ interface Props {
   onSort: (col: SortCol) => void
   onPage: (p: number) => void
   loading: boolean
-  season: number
+  seasons: number[]
 }
 
-function SplitRows({ catcherId, season }: { catcherId: number; season: number }) {
+function SplitRows({ catcherId, seasons }: { catcherId: number; seasons: number[] }) {
   const [splits, setSplits] = useState<CatcherSplitRow[] | null>(null)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
     setLoading(true)
-    fetch(`/api/catcher-splits?catcher_id=${catcherId}&season=${season}`)
+    fetch(`/api/catcher-splits?catcher_id=${catcherId}&seasons=${seasons.join(',')}`)
       .then(r => r.json())
       .then(data => { setSplits(data); setLoading(false) })
       .catch(() => { setSplits([]); setLoading(false) })
-  }, [catcherId, season])
+  }, [catcherId, seasons.join(',')])
 
   if (loading) {
     return (
@@ -66,7 +66,7 @@ function SplitRows({ catcherId, season }: { catcherId: number; season: number })
   )
 }
 
-export function CatcherTable({ rows, total, page, pageSize, sortCol, sortDir, onSort, onPage, loading, season }: Props) {
+export function CatcherTable({ rows, total, page, pageSize, sortCol, sortDir, onSort, onPage, loading, seasons }: Props) {
   const [expandedId, setExpandedId] = useState<number | null>(null)
   const totalPages = Math.ceil(total / pageSize)
   const startRank = (page - 1) * pageSize + 1
@@ -127,7 +127,7 @@ export function CatcherTable({ rows, total, page, pageSize, sortCol, sortDir, on
                       <span className={fipColor(row.fip)}>{fmt(row.fip)}</span>
                     </td>
                   </tr>
-                  {isExpanded && <SplitRows catcherId={row.catcher_id} season={season} />}
+                  {isExpanded && <SplitRows catcherId={row.catcher_id} seasons={seasons} />}
                 </Fragment>
               )
             })}

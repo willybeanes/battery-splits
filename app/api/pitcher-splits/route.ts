@@ -1,33 +1,67 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 
+function ipToOuts(ip: number): number {
+  const innings = Math.floor(ip)
+  return innings * 3 + Math.round((ip - innings) * 10)
+}
+function outsToIp(outs: number): number {
+  return Math.floor(outs / 3) + (outs % 3) / 10
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const pitcher_id = parseInt(searchParams.get('pitcher_id') ?? '0')
-  const season = parseInt(searchParams.get('season') ?? '2025')
+  const seasonsRaw = searchParams.get('seasons')
+  const seasonRaw  = searchParams.get('season')
+  const seasons = seasonsRaw
+    ? seasonsRaw.split(',').map(Number).filter(n => !isNaN(n) && n > 0)
+    : [parseInt(seasonRaw ?? '2026')]
 
   if (!pitcher_id) return NextResponse.json([], { status: 400 })
 
   const db = createServiceClient()
   const [{ data: splits }, { data: catchers }] = await Promise.all([
     db.from('pitcher_catcher_stats').select('*')
-      .eq('pitcher_id', pitcher_id).eq('season', season).neq('catcher_id', 0)
-      .order('bf', { ascending: false }),
-    db.from('catchers').select('mlbam_id,name,team').eq('season', season),
+      .eq('pitcher_id', pitcher_id).in('season', seasons).neq('catcher_id', 0),
+    db.from('catchers').select('mlbam_id,name,team,season').in('season', seasons).order('season', { ascending: true }),
   ])
 
+  // Use most recent season's name/team per catcher
   const catcherMap = new Map<number, { name: string; team: string | null }>()
   for (const c of catchers ?? []) catcherMap.set(c.mlbam_id, { name: c.name, team: c.team })
 
-  const rows = (splits ?? []).map(r => ({
-    catcher_id:   r.catcher_id,
-    catcher_name: catcherMap.get(r.catcher_id)?.name ?? `ID ${r.catcher_id}`,
-    catcher_team: catcherMap.get(r.catcher_id)?.team ?? null,
-    bf: r.bf, ip: r.ip,
-    era: r.era, whip: r.whip,
-    k_pct: r.k_pct, bb_pct: r.bb_pct,
-    fip: r.fip, xfip: r.xfip,
-  }))
+  // Aggregate across seasons by catcher_id
+  const agg = new Map<number, { catcher_id: number; bf: number; outs: number; hits: number; hr: number; bb: number; so: number; er: number }>()
+  for (const r of splits ?? []) {
+    const cid = r.catcher_id
+    if (!agg.has(cid)) agg.set(cid, { catcher_id: cid, bf: 0, outs: 0, hits: 0, hr: 0, bb: 0, so: 0, er: 0 })
+    const a = agg.get(cid)!
+    a.bf   += r.bf   ?? 0
+    a.outs += ipToOuts(Number(r.ip ?? 0))
+    a.hits += r.hits ?? 0
+    a.hr   += r.hr   ?? 0
+    a.bb   += r.bb   ?? 0
+    a.so   += r.so   ?? 0
+    a.er   += r.er   ?? 0
+  }
+
+  const rows = [...agg.values()]
+    .sort((a, b) => b.bf - a.bf)
+    .map(a => {
+      const ip = outsToIp(a.outs)
+      return {
+        catcher_id:   a.catcher_id,
+        catcher_name: catcherMap.get(a.catcher_id)?.name ?? `ID ${a.catcher_id}`,
+        catcher_team: catcherMap.get(a.catcher_id)?.team ?? null,
+        bf: a.bf, ip,
+        era:   a.outs > 0 ? Math.round((a.er / (a.outs / 3)) * 9 * 100) / 100 : null,
+        whip:  a.outs > 0 ? Math.round(((a.hits + a.bb) / (a.outs / 3)) * 1000) / 1000 : null,
+        k_pct: a.bf   > 0 ? Math.round((a.so / a.bf) * 1000) / 10 : null,
+        bb_pct:a.bf   > 0 ? Math.round((a.bb / a.bf) * 1000) / 10 : null,
+        fip: null, xfip: null,
+      }
+    })
 
   return NextResponse.json(rows)
 }

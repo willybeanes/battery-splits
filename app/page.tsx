@@ -277,7 +277,7 @@ function HomeContent() {
                 total={total} page={page} pageSize={50}
                 sortCol={sortCol} sortDir={sortDir}
                 onSort={handleSort} onPage={setPage}
-                loading={loading} season={season}
+                loading={loading} seasons={seasons}
               />
             )}
             {tab === 'catcher' && (
@@ -286,7 +286,7 @@ function HomeContent() {
                 total={total} page={page} pageSize={50}
                 sortCol={sortCol} sortDir={sortDir}
                 onSort={handleSort} onPage={setPage}
-                loading={loading} season={season}
+                loading={loading} seasons={seasons}
               />
             )}
             {tab === 'battery' && (
