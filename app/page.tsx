@@ -131,6 +131,7 @@ function HomeContent() {
     if (tab === 'battery') return `${base} · All pitcher–catcher combinations`
     if (!catcher && !pitcher) return `${base} · All Pitchers`
     if (pitcher && !catcher) return `${base} · ${pitcher.name}`
+    if (!catcher) return base
     const bfLabel = (data as LeaderboardResponse)?.catcherBf
       ? ` (${(data as LeaderboardResponse).catcherBf!.toLocaleString()} BF)` : ''
     if (mode === 'was')   return `${base} · With ${catcher.name} catching${bfLabel}`
