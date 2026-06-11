@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
-  Season, FilterMode, Catcher, Pitcher, SortDir, TabName,
+  FilterMode, Catcher, Pitcher, SortDir, TabName,
   LeaderboardResponse, CatcherLeaderboardResponse, BatteryLeaderboardResponse,
 } from '@/lib/types'
 import { SeasonToggle }    from '@/components/SeasonToggle'
@@ -20,12 +20,19 @@ import { BatteryTable }    from '@/components/BatteryTable'
 
 type AnyResponse = LeaderboardResponse | CatcherLeaderboardResponse | BatteryLeaderboardResponse
 
+function parseSeasons(sp: URLSearchParams): number[] {
+  const multi = sp.get('seasons')
+  if (multi) return multi.split(',').map(Number).filter(n => !isNaN(n) && n > 0)
+  const single = sp.get('season')
+  return [parseInt(single ?? '2026')]
+}
+
 function HomeContent() {
   const router = useRouter()
   const sp = useSearchParams()
 
   const [tab,     setTab]     = useState<TabName>((sp.get('tab') as TabName) ?? 'pitcher')
-  const [season,  setSeason]  = useState<Season>((parseInt(sp.get('season') ?? '2026') as Season))
+  const [seasons, setSeasons] = useState<number[]>(parseSeasons(sp))
   const [team,    setTeam]    = useState(sp.get('team') ?? '')
   const [minBf,   setMinBf]   = useState(parseInt(sp.get('min_bf') ?? '0'))
   const [minIp,   setMinIp]   = useState(
@@ -44,11 +51,15 @@ function HomeContent() {
   const [error,      setError]      = useState<string | null>(null)
   const [showSearch, setShowSearch] = useState(false)
 
-  // Sync filter state to URL so links are shareable/bookmarkable
+  // Most recent season drives qualifiedIp and search lookups
+  const season = Math.max(...seasons)
+
+  // Sync filter state to URL
   useEffect(() => {
     const params = new URLSearchParams()
     if (tab !== 'pitcher')            params.set('tab', tab)
-    if (season !== 2026)              params.set('season', String(season))
+    if (seasons.length === 1 && seasons[0] !== 2026) params.set('season', String(seasons[0]))
+    if (seasons.length > 1)           params.set('seasons', seasons.join(','))
     if (team)                         params.set('team', team)
     if (minBf !== 0)                  params.set('min_bf', String(minBf))
     if (minIp !== QUALIFIED_SENTINEL) params.set('min_ip', String(minIp))
@@ -60,13 +71,14 @@ function HomeContent() {
     if (mode !== 'all')               params.set('mode', mode)
     const qs = params.toString()
     router.replace(qs ? `?${qs}` : '/', { scroll: false })
-  }, [tab, season, team, minBf, minIp, catcher?.mlbam_id, pitcher?.mlbam_id, mode, sortCol, sortDir, page])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, seasons.join(','), team, minBf, minIp, catcher?.mlbam_id, pitcher?.mlbam_id, mode, sortCol, sortDir, page])
 
   useEffect(() => {
     let alive = true
 
     const params = new URLSearchParams({
-      tab, season: String(season), team, min_bf: String(minBf),
+      tab, seasons: seasons.join(','), team, min_bf: String(minBf),
       min_ip: String(minIp === QUALIFIED_SENTINEL ? qualifiedIp(season) : minIp),
       sort: sortCol, dir: sortDir, page: String(page),
     })
@@ -96,9 +108,8 @@ function HomeContent() {
 
     return () => { alive = false }
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [tab, season, team, minBf, minIp, catcher?.mlbam_id, pitcher?.mlbam_id, mode, sortCol, sortDir, page])
+  }, [tab, seasons.join(','), team, minBf, minIp, catcher?.mlbam_id, pitcher?.mlbam_id, mode, sortCol, sortDir, page])
 
-  // Reset sort + page when tab changes
   function handleTabChange(t: TabName) {
     setTab(t)
     setSortCol('fip')
@@ -107,7 +118,6 @@ function HomeContent() {
     setCatcher(null)
     setPitcher(null)
     setMode('all')
-    // Battery tab doesn't support Qualified — reset to 0 if it was selected
     if (t === 'battery' && minIp === QUALIFIED_SENTINEL) setMinIp(0)
   }
 
@@ -121,12 +131,20 @@ function HomeContent() {
     setPage(1)
   }
 
-  function handleSeasonChange(s: Season) {
-    setSeason(s); setCatcher(null); setPitcher(null); setMode('all'); setMinIp(QUALIFIED_SENTINEL); setPage(1)
+  function handleSeasonsChange(s: number[]) {
+    setSeasons(s); setCatcher(null); setPitcher(null); setMode('all'); setMinIp(QUALIFIED_SENTINEL); setPage(1)
+  }
+
+  function seasonLabel() {
+    if (seasons.length === 1) return `${seasons[0]} Season`
+    const sorted = [...seasons].sort((a, b) => a - b)
+    const isRange = sorted.every((s, i) => i === 0 || s === sorted[i - 1] + 1)
+    if (isRange) return `${sorted[0]}–${sorted[sorted.length - 1]}`
+    return `${seasons.length} Seasons`
   }
 
   function subtitle() {
-    const base = `${season} Season`
+    const base = seasonLabel()
     if (tab === 'catcher') return `${base} · Pitcher stats by catcher`
     if (tab === 'battery') return `${base} · All pitcher–catcher combinations`
     if (!catcher && !pitcher) return `${base} · All Pitchers`
@@ -143,7 +161,7 @@ function HomeContent() {
 
   function buildExportUrl() {
     const params = new URLSearchParams({
-      tab, season: String(season), team, min_bf: String(minBf),
+      tab, seasons: seasons.join(','), team, min_bf: String(minBf),
       min_ip: String(minIp === QUALIFIED_SENTINEL ? qualifiedIp(season) : minIp),
       sort: sortCol, dir: sortDir, page: '1', export: '1',
     })
@@ -179,7 +197,7 @@ function HomeContent() {
           <div className="px-5 pt-4 pb-3 border-b border-[#ece8e1] flex flex-col gap-3">
             {/* Row 1: season / team / thresholds + search toggle */}
             <div className="flex flex-wrap items-center gap-4">
-              <SeasonToggle value={season} onChange={handleSeasonChange} />
+              <SeasonToggle value={seasons} onChange={handleSeasonsChange} />
               <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
               <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />
               <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />
