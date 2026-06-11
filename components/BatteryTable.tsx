@@ -4,6 +4,17 @@ import { BatteryRow, SortCol, SortDir } from '@/lib/types'
 import { StatHeader } from './StatHeader'
 import { fmt, fmtIp, fipColor } from '@/lib/stats'
 
+function chemColor(score: number): string {
+  if (score === 50) return '#1a1a1a'
+  if (score > 50) {
+    const t = (score - 50) / 50
+    return `rgb(${Math.round(26 + t * (5 - 26))},${Math.round(26 + t * (150 - 26))},${Math.round(26 + t * (105 - 26))})`
+  } else {
+    const t = (50 - score) / 50
+    return `rgb(${Math.round(26 + t * (220 - 26))},${Math.round(26 + t * (38 - 26))},${Math.round(26 + t * (38 - 26))})`
+  }
+}
+
 interface Props {
   rows: BatteryRow[]
   total: number
@@ -67,7 +78,7 @@ export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, on
                 <td className="px-3 py-2.5 text-right font-mono text-sm">
                   {row.chem_score == null
                     ? <span className="text-[#ccc]">—</span>
-                    : <span className={row.chem_score >= 70 ? 'text-emerald-600 font-semibold' : row.chem_score <= 30 ? 'text-red-500 font-semibold' : 'text-[#555]'}>{row.chem_score}</span>
+                    : <span className="font-semibold" style={{ color: chemColor(row.chem_score) }}>{row.chem_score}</span>
                   }
                 </td>
               </tr>
