@@ -134,6 +134,8 @@ export interface TeamBatteryEntry {
   catcher_name: string
   chem_score: number
   ip: number
+  battery_fip: number | null
+  pitcher_fip: number | null
 }
 
 export interface TeamChemRow {

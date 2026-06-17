@@ -1,7 +1,7 @@
 'use client'
 
 import { TeamChemRow } from '@/lib/types'
-import { fmtIp } from '@/lib/stats'
+import { fmtIp, fmt, fipColor } from '@/lib/stats'
 
 function chemColor(score: number): string {
   if (score === 50) return '#1a1a1a'
@@ -29,15 +29,19 @@ export function TeamsTable({ rows, loading }: Props) {
             <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-left">Best Battery</th>
             <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-20">Chem</th>
             <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16">IP</th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16" title="Pitcher's overall FIP for selected seasons">P FIP</th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16" title="FIP allowed together as a battery">B FIP</th>
             <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-left">Worst Battery</th>
             <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-20">Chem</th>
             <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16">IP</th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16" title="Pitcher's overall FIP for selected seasons">P FIP</th>
+            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16" title="FIP allowed together as a battery">B FIP</th>
           </tr>
         </thead>
         <tbody className={loading ? 'opacity-50' : ''}>
           {rows.length === 0 && !loading && (
             <tr>
-              <td colSpan={7} className="px-4 py-12 text-center text-[#aaa] text-sm">
+              <td colSpan={11} className="px-4 py-12 text-center text-[#aaa] text-sm">
                 No data available.
               </td>
             </tr>
@@ -58,10 +62,14 @@ export function TeamsTable({ rows, loading }: Props) {
                     {row.best.chem_score}
                   </td>
                   <td className="px-4 py-3 text-center font-mono text-xs text-[#999]">{fmtIp(row.best.ip)}</td>
+                  <td className="px-4 py-3 text-center font-mono text-sm"><span className={fipColor(row.best.pitcher_fip)}>{fmt(row.best.pitcher_fip)}</span></td>
+                  <td className="px-4 py-3 text-center font-mono text-sm"><span className={fipColor(row.best.battery_fip)}>{fmt(row.best.battery_fip)}</span></td>
                 </>
               ) : (
                 <>
                   <td className="px-4 py-3 text-sm text-[#ccc]">—</td>
+                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
+                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
                   <td className="px-4 py-3 text-center text-[#ccc]">—</td>
                   <td className="px-4 py-3 text-center text-[#ccc]">—</td>
                 </>
@@ -79,10 +87,14 @@ export function TeamsTable({ rows, loading }: Props) {
                     {row.worst.chem_score}
                   </td>
                   <td className="px-4 py-3 text-center font-mono text-xs text-[#999]">{fmtIp(row.worst.ip)}</td>
+                  <td className="px-4 py-3 text-center font-mono text-sm"><span className={fipColor(row.worst.pitcher_fip)}>{fmt(row.worst.pitcher_fip)}</span></td>
+                  <td className="px-4 py-3 text-center font-mono text-sm"><span className={fipColor(row.worst.battery_fip)}>{fmt(row.worst.battery_fip)}</span></td>
                 </>
               ) : (
                 <>
                   <td className="px-4 py-3 text-sm text-[#ccc]">—</td>
+                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
+                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
                   <td className="px-4 py-3 text-center text-[#ccc]">—</td>
                   <td className="px-4 py-3 text-center text-[#ccc]">—</td>
                 </>
