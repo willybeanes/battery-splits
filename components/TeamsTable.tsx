@@ -1,10 +1,31 @@
 'use client'
 
-import { TeamChemRow } from '@/lib/types'
-import { fmtIp, fmt, fipColor } from '@/lib/stats'
+import Image from 'next/image'
+import { TeamChemRow, TeamBatteryEntry } from '@/lib/types'
+import { fmtIp, fmt } from '@/lib/stats'
+
+// Team abbreviation → MLB team ID for logo URLs
+const TEAM_IDS: Record<string, number> = {
+  ARI: 109, ATL: 144, BAL: 110, BOS: 111, CHC: 112, CHW: 145, CWS: 145,
+  CIN: 113, CLE: 114, CLG: 114, COL: 115, DET: 116, HOU: 117,
+  KC: 118, KCR: 118, LAA: 108, LAD: 119, MIA: 146, MIL: 158,
+  MIN: 142, NYM: 121, NYY: 147, OAK: 133, ATH: 133,
+  PHI: 143, PIT: 134, SD: 135, SDP: 135, SEA: 136,
+  SF: 137, SFG: 137, STL: 138, TB: 139, TBR: 139,
+  TEX: 140, TOR: 141, WSH: 120, WSN: 120, WAS: 120,
+}
+
+function teamLogoUrl(team: string): string | null {
+  const id = TEAM_IDS[team]
+  return id ? `https://www.mlbstatic.com/team-logos/${id}.svg` : null
+}
+
+function headshot(playerId: number): string {
+  return `https://img.mlbstatic.com/mlb-photos/image/upload/d_people:generic:headshot:67:current.png/w_120,q_auto:best/v1/people/${playerId}/headshot/67/current`
+}
 
 function chemColor(score: number): string {
-  if (score === 50) return '#1a1a1a'
+  if (score === 50) return '#555'
   if (score > 50) {
     const t = (score - 50) / 50
     return `rgb(${Math.round(26 + t * (5 - 26))},${Math.round(26 + t * (150 - 26))},${Math.round(26 + t * (105 - 26))})`
@@ -14,95 +35,114 @@ function chemColor(score: number): string {
   }
 }
 
+function BatteryRow({ entry, kind }: { entry: TeamBatteryEntry; kind: 'best' | 'worst' }) {
+  const isBest = kind === 'best'
+  return (
+    <div className={`px-4 py-3 ${isBest ? 'border-b border-[#ece8e1]' : ''}`}>
+      {/* Label */}
+      <div className="flex items-center gap-1.5 mb-2">
+        <span className={`text-[10px] font-black uppercase tracking-widest ${isBest ? 'text-[#0a7a52]' : 'text-[#b02020]'}`}>
+          {isBest ? '▲ Best' : '▼ Worst'}
+        </span>
+        <span className="text-[10px] text-[#bbb]">Chemistry</span>
+      </div>
+
+      {/* Players */}
+      <div className="flex items-center gap-3">
+        {/* Pitcher */}
+        <div className="flex flex-col items-center gap-1 shrink-0">
+          <div className="w-10 h-10 rounded-full overflow-hidden bg-[#f0ede8] border border-[#e0dbd2]">
+            <Image
+              src={headshot(entry.pitcher_id)}
+              alt={entry.pitcher_name}
+              width={40} height={40}
+              className="object-cover object-top w-full h-full"
+              unoptimized
+            />
+          </div>
+          <span className="text-[9px] text-[#999] font-medium text-center leading-tight max-w-[48px] truncate">P</span>
+        </div>
+
+        {/* Names + stats */}
+        <div className="flex-1 min-w-0">
+          <div className="flex items-baseline gap-1 flex-wrap">
+            <span className="text-sm font-semibold text-[#1a1a1a] truncate">{entry.pitcher_name}</span>
+            <span className="text-[#ccc] text-xs">/</span>
+            <span className="text-sm text-[#555] truncate">{entry.catcher_name}</span>
+          </div>
+          <div className="flex items-center gap-2 mt-1 flex-wrap">
+            <span className="text-xs font-black font-mono" style={{ color: chemColor(entry.chem_score) }}>
+              {entry.chem_score}
+            </span>
+            <span className="text-[10px] text-[#bbb]">·</span>
+            <span className="text-[10px] text-[#999]">P FIP</span>
+            <span className="text-xs font-mono text-[#444]">{fmt(entry.pitcher_fip)}</span>
+            <span className="text-[10px] text-[#bbb]">·</span>
+            <span className="text-[10px] text-[#999]">B FIP</span>
+            <span className="text-xs font-mono text-[#444]">{fmt(entry.battery_fip)}</span>
+            <span className="text-[10px] text-[#bbb]">·</span>
+            <span className="text-[10px] text-[#999]">{fmtIp(entry.ip)} IP</span>
+          </div>
+        </div>
+
+        {/* Catcher */}
+        <div className="flex flex-col items-center gap-1 shrink-0">
+          <div className="w-10 h-10 rounded-full overflow-hidden bg-[#f0ede8] border border-[#e0dbd2]">
+            <Image
+              src={headshot(entry.catcher_id)}
+              alt={entry.catcher_name}
+              width={40} height={40}
+              className="object-cover object-top w-full h-full"
+              unoptimized
+            />
+          </div>
+          <span className="text-[9px] text-[#999] font-medium text-center leading-tight max-w-[48px] truncate">C</span>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function TeamCard({ row }: { row: TeamChemRow }) {
+  const logo = teamLogoUrl(row.team)
+  return (
+    <div className="bg-white border border-[#ddd8d0] rounded-2xl shadow-sm overflow-hidden">
+      {/* Team header */}
+      <div className="px-4 py-3 border-b border-[#ece8e1] flex items-center gap-3 bg-[#faf9f7]">
+        {logo ? (
+          <Image src={logo} alt={row.team} width={32} height={32} className="object-contain shrink-0" unoptimized />
+        ) : (
+          <div className="w-8 h-8 rounded-full bg-[#e8e4de] shrink-0" />
+        )}
+        <span className="text-sm font-black tracking-tight text-[#1a1a1a]">{row.team}</span>
+      </div>
+
+      {/* Batteries */}
+      {row.best
+        ? <BatteryRow entry={row.best} kind="best" />
+        : <div className="px-4 py-3 text-sm text-[#ccc] border-b border-[#ece8e1]">No qualifying battery</div>
+      }
+      {row.worst
+        ? <BatteryRow entry={row.worst} kind="worst" />
+        : <div className="px-4 py-3 text-sm text-[#ccc]">No qualifying battery</div>
+      }
+    </div>
+  )
+}
+
 interface Props {
   rows: TeamChemRow[]
   loading: boolean
 }
 
 export function TeamsTable({ rows, loading }: Props) {
+  if (!loading && rows.length === 0) {
+    return <p className="text-center text-sm text-[#aaa] py-12">No data available.</p>
+  }
+
   return (
-    <div className="overflow-x-auto rounded-xl border border-[#e0dbd2]">
-      <table className="w-full border-collapse min-w-[700px]">
-        <thead>
-          <tr className="bg-[#f5f2ed] border-b border-[#e0dbd2]">
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-left w-16">Team</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-left">Best Battery</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-20">Chem</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16">IP</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16" title="Pitcher's overall FIP for selected seasons">P FIP</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16" title="FIP allowed together as a battery">B FIP</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-left">Worst Battery</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-20">Chem</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16">IP</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16" title="Pitcher's overall FIP for selected seasons">P FIP</th>
-            <th className="px-4 py-3 text-xs font-semibold uppercase tracking-wider text-[#999] text-center w-16" title="FIP allowed together as a battery">B FIP</th>
-          </tr>
-        </thead>
-        <tbody className={loading ? 'opacity-50' : ''}>
-          {rows.length === 0 && !loading && (
-            <tr>
-              <td colSpan={11} className="px-4 py-12 text-center text-[#aaa] text-sm">
-                No data available.
-              </td>
-            </tr>
-          )}
-          {rows.map(row => (
-            <tr key={row.team} className="border-b border-[#ece8e1] hover:bg-[#f8f6f2] transition-colors">
-              <td className="px-4 py-3 text-sm font-black font-mono text-[#1a1a1a]">{row.team}</td>
-
-              {/* Best */}
-              {row.best ? (
-                <>
-                  <td className="px-4 py-3 text-sm text-[#1a1a1a]">
-                    <span className="font-semibold">{row.best.pitcher_name}</span>
-                    <span className="text-[#aaa] mx-1.5">/</span>
-                    <span className="text-[#555]">{row.best.catcher_name}</span>
-                  </td>
-                  <td className="px-4 py-3 text-center font-mono text-sm font-semibold" style={{ color: chemColor(row.best.chem_score) }}>
-                    {row.best.chem_score}
-                  </td>
-                  <td className="px-4 py-3 text-center font-mono text-xs text-[#999]">{fmtIp(row.best.ip)}</td>
-                  <td className="px-4 py-3 text-center font-mono text-sm"><span className={fipColor(row.best.pitcher_fip)}>{fmt(row.best.pitcher_fip)}</span></td>
-                  <td className="px-4 py-3 text-center font-mono text-sm"><span className={fipColor(row.best.battery_fip)}>{fmt(row.best.battery_fip)}</span></td>
-                </>
-              ) : (
-                <>
-                  <td className="px-4 py-3 text-sm text-[#ccc]">—</td>
-                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
-                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
-                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
-                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
-                </>
-              )}
-
-              {/* Worst */}
-              {row.worst ? (
-                <>
-                  <td className="px-4 py-3 text-sm text-[#1a1a1a]">
-                    <span className="font-semibold">{row.worst.pitcher_name}</span>
-                    <span className="text-[#aaa] mx-1.5">/</span>
-                    <span className="text-[#555]">{row.worst.catcher_name}</span>
-                  </td>
-                  <td className="px-4 py-3 text-center font-mono text-sm font-semibold" style={{ color: chemColor(row.worst.chem_score) }}>
-                    {row.worst.chem_score}
-                  </td>
-                  <td className="px-4 py-3 text-center font-mono text-xs text-[#999]">{fmtIp(row.worst.ip)}</td>
-                  <td className="px-4 py-3 text-center font-mono text-sm"><span className={fipColor(row.worst.pitcher_fip)}>{fmt(row.worst.pitcher_fip)}</span></td>
-                  <td className="px-4 py-3 text-center font-mono text-sm"><span className={fipColor(row.worst.battery_fip)}>{fmt(row.worst.battery_fip)}</span></td>
-                </>
-              ) : (
-                <>
-                  <td className="px-4 py-3 text-sm text-[#ccc]">—</td>
-                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
-                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
-                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
-                  <td className="px-4 py-3 text-center text-[#ccc]">—</td>
-                </>
-              )}
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className={`grid grid-cols-1 sm:grid-cols-2 gap-4 ${loading ? 'opacity-50' : ''}`}>
+      {rows.map(row => <TeamCard key={row.team} row={row} />)}
     </div>
   )
 }

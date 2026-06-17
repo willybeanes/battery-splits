@@ -447,7 +447,7 @@ async function handleTeamsTab(db: DB, params: { seasons: number[] }) {
     const catcher_name = catcherMap.get(a.catcher_id)?.name ?? `ID ${a.catcher_id}`
 
     const cur = teamMap.get(a.pitcher_team) ?? { best: null, worst: null }
-    const entry = { pitcher_name: a.pitcher_name, catcher_name, chem_score, ip, battery_fip: rates.fip, pitcher_fip: seasonFip }
+    const entry = { pitcher_id: a.pitcher_id, pitcher_name: a.pitcher_name, catcher_id: a.catcher_id, catcher_name, chem_score, ip, battery_fip: rates.fip, pitcher_fip: seasonFip }
     if (!cur.best || chem_score > cur.best.chem_score) cur.best = entry
     if (!cur.worst || chem_score < cur.worst.chem_score) cur.worst = entry
     teamMap.set(a.pitcher_team, cur)

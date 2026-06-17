@@ -130,7 +130,9 @@ export interface BatteryLeaderboardResponse {
 }
 
 export interface TeamBatteryEntry {
+  pitcher_id: number
   pitcher_name: string
+  catcher_id: number
   catcher_name: string
   chem_score: number
   ip: number
