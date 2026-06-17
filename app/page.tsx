@@ -4,7 +4,7 @@ import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   FilterMode, Catcher, Pitcher, SortDir, TabName,
-  LeaderboardResponse, CatcherLeaderboardResponse, BatteryLeaderboardResponse,
+  LeaderboardResponse, CatcherLeaderboardResponse, BatteryLeaderboardResponse, TeamsLeaderboardResponse,
 } from '@/lib/types'
 import { SeasonToggle }    from '@/components/SeasonToggle'
 import { CatcherFilter }   from '@/components/CatcherFilter'
@@ -17,8 +17,9 @@ import { TabNav }          from '@/components/TabNav'
 import { LeaderboardTable } from '@/components/LeaderboardTable'
 import { CatcherTable }    from '@/components/CatcherTable'
 import { BatteryTable }    from '@/components/BatteryTable'
+import { TeamsTable }      from '@/components/TeamsTable'
 
-type AnyResponse = LeaderboardResponse | CatcherLeaderboardResponse | BatteryLeaderboardResponse
+type AnyResponse = LeaderboardResponse | CatcherLeaderboardResponse | BatteryLeaderboardResponse | TeamsLeaderboardResponse
 
 function parseSeasons(sp: URLSearchParams): number[] {
   const multi = sp.get('seasons')
@@ -118,7 +119,7 @@ function HomeContent() {
     setCatcher(null)
     setPitcher(null)
     setMode('all')
-    if (t === 'battery' && minIp === QUALIFIED_SENTINEL) setMinIp(0)
+    if ((t === 'battery' || t === 'teams') && minIp === QUALIFIED_SENTINEL) setMinIp(0)
   }
 
   function handleSort(col: string) {
@@ -147,6 +148,7 @@ function HomeContent() {
     const base = seasonLabel()
     if (tab === 'catcher') return `${base} · Pitcher stats by catcher`
     if (tab === 'battery') return `${base} · All pitcher–catcher combinations`
+    if (tab === 'teams')   return `${base} · Best & worst chemistry battery by team`
     if (!catcher && !pitcher) return `${base} · All Pitchers`
     if (pitcher && !catcher) return `${base} · ${pitcher.name}`
     if (!catcher) return base
@@ -200,9 +202,9 @@ function HomeContent() {
               <SeasonToggle value={seasons} onChange={handleSeasonsChange} />
               <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
               <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />
-              <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />
-              <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} hideQualified={tab === 'battery'} />
-              <button
+              {tab !== 'teams' && <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />}
+              {tab !== 'teams' && <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} hideQualified={tab === 'battery'} />}
+              {tab !== 'teams' && <button
                 onClick={() => setShowSearch(s => !s)}
                 className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#888] hover:text-[#1a1a1a] transition-colors rounded-lg hover:bg-[#f5f2ed]"
               >
@@ -210,10 +212,10 @@ function HomeContent() {
                 <svg className={`w-3.5 h-3.5 transition-transform ${showSearch ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M19 9l-7 7-7-7" />
                 </svg>
-              </button>
+              </button>}
             </div>
             {/* Row 2: pitcher / catcher search (collapsible) */}
-            {showSearch && (
+            {showSearch && tab !== 'teams' && (
               <div className="flex flex-wrap items-center gap-4">
                 {tab !== 'catcher' && (
                   <PitcherFilter
@@ -249,11 +251,11 @@ function HomeContent() {
           <div className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h2 className="text-sm font-bold text-[#1a1a1a]">{subtitle()}</h2>
-              {data && <p className="text-xs text-[#999] mt-0.5">{total.toLocaleString()} {tab === 'catcher' ? 'catchers' : tab === 'battery' ? 'combinations' : 'pitchers'}</p>}
+              {data && <p className="text-xs text-[#999] mt-0.5">{total.toLocaleString()} {tab === 'catcher' ? 'catchers' : tab === 'battery' ? 'combinations' : tab === 'teams' ? 'teams' : 'pitchers'}</p>}
             </div>
             <div className="flex items-center gap-3">
               {loading && <span className="text-xs text-[#999] animate-pulse">Loading…</span>}
-              {data && !loading && (
+              {data && !loading && tab !== 'teams' && (
                 <a
                   href={buildExportUrl()}
                   download
@@ -295,6 +297,12 @@ function HomeContent() {
                 total={total} page={page} pageSize={50}
                 sortCol={sortCol} sortDir={sortDir}
                 onSort={handleSort} onPage={setPage}
+                loading={loading}
+              />
+            )}
+            {tab === 'teams' && (
+              <TeamsTable
+                rows={(data as TeamsLeaderboardResponse)?.rows ?? []}
                 loading={loading}
               />
             )}

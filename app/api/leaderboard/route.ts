@@ -373,6 +373,92 @@ async function handleBatteryTab(
   return NextResponse.json(paginate(sorted, page))
 }
 
+// ── teams tab ─────────────────────────────────────────────────────────────────
+
+async function handleTeamsTab(db: DB, params: { seasons: number[] }) {
+  const { seasons } = params
+
+  const [catcherMap, rawRows, pitcherTotalsRaw] = await Promise.all([
+    getCatcherMap(db, seasons),
+    fetchStatRows(db, seasons, 'nonzero'),
+    fetchStatRows(db, seasons, 'zero'),
+  ])
+
+  // Aggregate by pitcher:catcher key (same as battery tab)
+  const agg = new Map<string, { pitcher_id: number; pitcher_name: string; pitcher_team: string | null; pitcher_season: number; catcher_id: number; bf: number; outs: number; hits: number; hr: number; bb: number; so: number; er: number }>()
+  for (const r of rawRows) {
+    const pid = r.pitcher_id as number
+    const cid = r.catcher_id as number
+    const s   = r.season as number
+    const key = `${pid}:${cid}`
+    if (!agg.has(key)) agg.set(key, { pitcher_id: pid, pitcher_name: r.pitcher_name as string, pitcher_team: r.pitcher_team as string | null, pitcher_season: s, catcher_id: cid, bf: 0, outs: 0, hits: 0, hr: 0, bb: 0, so: 0, er: 0 })
+    const a = agg.get(key)!
+    if (s > a.pitcher_season) { a.pitcher_name = r.pitcher_name as string; a.pitcher_team = r.pitcher_team as string | null; a.pitcher_season = s }
+    a.bf   += (r.bf   as number) ?? 0
+    a.outs += ipToOuts(Number(r.ip ?? 0))
+    a.hits += (r.hits as number) ?? 0
+    a.hr   += (r.hr   as number) ?? 0
+    a.bb   += (r.bb   as number) ?? 0
+    a.so   += (r.so   as number) ?? 0
+    a.er   += (r.er   as number) ?? 0
+  }
+
+  // Build pitcher aggregate FIP map
+  const pitcherFipMap = new Map<number, number>()
+  for (const t of aggregatePitcherTotals(pitcherTotalsRaw)) {
+    if (t.fip != null) pitcherFipMap.set(t.pitcher_id, t.fip)
+  }
+
+  // Compute diffs for ≥20 IP combos
+  const diffs: number[] = []
+  for (const a of agg.values()) {
+    const ip = outsToIp(a.outs)
+    const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip).fip
+    const seasonFip = pitcherFipMap.get(a.pitcher_id)
+    if (ip >= 20 && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
+  }
+
+  let chemMean = 0, chemStd = 1
+  if (diffs.length > 1) {
+    chemMean = diffs.reduce((s, d) => s + d, 0) / diffs.length
+    chemStd = Math.sqrt(diffs.reduce((s, d) => s + (d - chemMean) ** 2, 0) / diffs.length) || 1
+  }
+
+  function normalCdf(z: number): number {
+    const t = 1 / (1 + 0.2316419 * Math.abs(z))
+    const d = 0.3989423 * Math.exp(-z * z / 2)
+    const p = d * t * (0.3193815 + t * (-0.3565638 + t * (1.7814779 + t * (-1.8212560 + t * 1.3302744))))
+    return z > 0 ? 1 - p : p
+  }
+
+  // Group qualifying combos by team, track best and worst chem_score
+  type TeamEntry = { pitcher_name: string; catcher_name: string; chem_score: number; ip: number }
+  const teamMap = new Map<string, { best: TeamEntry | null; worst: TeamEntry | null }>()
+
+  for (const a of agg.values()) {
+    if (!a.pitcher_team) continue
+    const ip = outsToIp(a.outs)
+    const rates = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip)
+    if (ip < 20 || rates.fip == null) continue
+    const seasonFip = pitcherFipMap.get(a.pitcher_id)
+    if (seasonFip == null) continue
+    const z = ((seasonFip - rates.fip) - chemMean) / chemStd
+    const chem_score = Math.round(normalCdf(z) * 100)
+    const catcher_name = catcherMap.get(a.catcher_id)?.name ?? `ID ${a.catcher_id}`
+
+    const cur = teamMap.get(a.pitcher_team) ?? { best: null, worst: null }
+    if (!cur.best || chem_score > cur.best.chem_score) cur.best = { pitcher_name: a.pitcher_name, catcher_name, chem_score, ip }
+    if (!cur.worst || chem_score < cur.worst.chem_score) cur.worst = { pitcher_name: a.pitcher_name, catcher_name, chem_score, ip }
+    teamMap.set(a.pitcher_team, cur)
+  }
+
+  const rows = [...teamMap.entries()]
+    .map(([team, { best, worst }]) => ({ team, best, worst }))
+    .sort((a, b) => a.team.localeCompare(b.team))
+
+  return NextResponse.json({ rows, total: rows.length })
+}
+
 // ── main handler ──────────────────────────────────────────────────────────────
 
 export async function GET(req: NextRequest) {
@@ -403,6 +489,7 @@ export async function GET(req: NextRequest) {
   if (tab === 'pitcher') return handlePitcherTab(db, { seasons, team, minBf, minIp, catcherId, pitcherId, mode, sort, dir, page, exportCsv })
   if (tab === 'catcher') return handleCatcherTab(db, { seasons, team, minBf, minIp, pitcherId, sort, dir, page, exportCsv })
   if (tab === 'battery') return handleBatteryTab(db, { seasons, team, minBf, minIp, pitcherId, catcherId, sort, dir, page, exportCsv })
+  if (tab === 'teams')   return handleTeamsTab(db, { seasons })
 
   return NextResponse.json({ error: 'Invalid tab' }, { status: 400 })
 }

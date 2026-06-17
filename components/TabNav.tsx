@@ -6,6 +6,7 @@ const TABS: { id: TabName; label: string; desc: string }[] = [
   { id: 'pitcher', label: 'Pitcher',  desc: 'Pitcher leaderboard with catcher filter' },
   { id: 'catcher', label: 'Catcher',  desc: 'Pitcher stats aggregated by catcher' },
   { id: 'battery', label: 'Battery',  desc: 'Every pitcher–catcher combination' },
+  { id: 'teams',   label: 'Teams',    desc: 'Best and worst chemistry battery per team' },
 ]
 
 interface Props {
