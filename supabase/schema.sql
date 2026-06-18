@@ -66,3 +66,9 @@ CREATE TABLE IF NOT EXISTS pitcher_game_logs (
 CREATE INDEX IF NOT EXISTS idx_pgl_pitcher ON pitcher_game_logs(pitcher_id);
 CREATE INDEX IF NOT EXISTS idx_pgl_season ON pitcher_game_logs(season);
 CREATE INDEX IF NOT EXISTS idx_pgl_date ON pitcher_game_logs(game_date);
+
+-- Model grade columns (populated by enrich_model_grades.py)
+ALTER TABLE pitcher_game_logs ADD COLUMN IF NOT EXISTS sp_stuff NUMERIC(6,2);
+ALTER TABLE pitcher_game_logs ADD COLUMN IF NOT EXISTS sp_location NUMERIC(6,2);
+ALTER TABLE pitcher_game_logs ADD COLUMN IF NOT EXISTS sp_pitching NUMERIC(6,2);
+ALTER TABLE pitcher_game_logs ADD COLUMN IF NOT EXISTS pitches_fg INTEGER;

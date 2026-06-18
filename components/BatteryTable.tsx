@@ -4,6 +4,15 @@ import { BatteryRow, SortCol, SortDir } from '@/lib/types'
 import { StatHeader } from './StatHeader'
 import { fmt, fmtIp, fipColor } from '@/lib/stats'
 
+function plusColor(val: number | null): string {
+  if (val === null) return '#ccc'
+  if (val >= 115) return '#0a7a52'
+  if (val >= 105) return '#2a9d6a'
+  if (val >= 95)  return '#888'
+  if (val >= 85)  return '#c0392b'
+  return '#8b0000'
+}
+
 function chemColor(score: number): string {
   if (score === 50) return '#1a1a1a'
   if (score > 50) {
@@ -49,12 +58,15 @@ export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, on
               <StatHeader col="bb_pct" label="BB%" sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
               <StatHeader col="fip"        label="FIP"  sortCol={sortCol} sortDir={sortDir} onSort={onSort} />
               <StatHeader col="chem_score" label="Chem" sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Chemistry Score: percentile rank of (pitcher season FIP − combo FIP). Requires 20 IP together. 100 = catcher most helps pitcher's FIP." />
+              <StatHeader col="battery_stuff_plus"    label="Stf+"  sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Pitch-weighted Stuff+ for this battery (2026 only)" />
+              <StatHeader col="battery_loc_plus"      label="Loc+"   sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Pitch-weighted Location+ for this battery (2026 only)" />
+              <StatHeader col="battery_pitching_plus" label="Pit+"  sortCol={sortCol} sortDir={sortDir} onSort={onSort} title="Pitch-weighted Pitching+ for this battery (2026 only)" />
             </tr>
           </thead>
           <tbody className={loading ? 'opacity-50' : ''}>
             {rows.length === 0 && !loading && (
               <tr>
-                <td colSpan={12} className="px-4 py-12 text-center text-[#aaa] text-sm">
+                <td colSpan={15} className="px-4 py-12 text-center text-[#aaa] text-sm">
                   No data available for this filter.
                 </td>
               </tr>
@@ -81,6 +93,11 @@ export function BatteryTable({ rows, total, page, pageSize, sortCol, sortDir, on
                     : <span className="font-semibold" style={{ color: chemColor(row.chem_score) }}>{row.chem_score}</span>
                   }
                 </td>
+                {(['battery_stuff_plus', 'battery_loc_plus', 'battery_pitching_plus'] as const).map(k => (
+                  <td key={k} className="px-3 py-2.5 text-right font-mono text-sm font-semibold">
+                    <span style={{ color: plusColor(row[k]) }}>{row[k] ?? '—'}</span>
+                  </td>
+                ))}
               </tr>
             ))}
           </tbody>

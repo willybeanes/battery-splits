@@ -370,6 +370,35 @@ async function handleBatteryTab(
     return z > 0 ? 1 - p : p
   }
 
+  // Battery-level model grades — pitch-weighted avg from game logs (2026 only)
+  const modelGradeMap = new Map<string, { battery_stuff_plus: number | null; battery_loc_plus: number | null; battery_pitching_plus: number | null }>()
+  if (seasons.includes(2026)) {
+    const { data: glRows } = await db.from('pitcher_game_logs')
+      .select('pitcher_id,catcher_id,sp_stuff,sp_location,sp_pitching,pitches_fg')
+      .eq('season', 2026)
+      .not('sp_location', 'is', null)
+    type GlAcc = { stuff: number; loc: number; pit: number; p: number }
+    const glAgg = new Map<string, GlAcc>()
+    for (const r of glRows ?? []) {
+      const key = `${r.pitcher_id}:${r.catcher_id}`
+      const pitches = (r.pitches_fg as number) || 0
+      if (!pitches) continue
+      if (!glAgg.has(key)) glAgg.set(key, { stuff: 0, loc: 0, pit: 0, p: 0 })
+      const g = glAgg.get(key)!
+      g.stuff += (r.sp_stuff    as number) * pitches
+      g.loc   += (r.sp_location as number) * pitches
+      g.pit   += (r.sp_pitching as number) * pitches
+      g.p     += pitches
+    }
+    for (const [key, g] of glAgg) {
+      modelGradeMap.set(key, {
+        battery_stuff_plus:    g.p ? Math.round(g.stuff / g.p) : null,
+        battery_loc_plus:      g.p ? Math.round(g.loc   / g.p) : null,
+        battery_pitching_plus: g.p ? Math.round(g.pit   / g.p) : null,
+      })
+    }
+  }
+
   const rows = [...agg.values()]
     .map(a => {
       const ip = outsToIp(a.outs)
@@ -383,11 +412,12 @@ async function handleBatteryTab(
           chem_score = Math.round(normalCdf(z) * 100)
         }
       }
+      const modelGrades = modelGradeMap.get(`${a.pitcher_id}:${a.catcher_id}`) ?? { battery_stuff_plus: null, battery_loc_plus: null, battery_pitching_plus: null }
       return {
         pitcher_id: a.pitcher_id, pitcher_name: a.pitcher_name, pitcher_team: a.pitcher_team,
         catcher_id: a.catcher_id, catcher_name: meta?.name ?? `ID ${a.catcher_id}`, catcher_team: meta?.team ?? null,
         bf: a.bf, ip, hits: a.hits, hr: a.hr, bb: a.bb, so: a.so, er: a.er,
-        ...rates, chem_score,
+        ...rates, chem_score, ...modelGrades,
       }
     })
     .filter(r => {
