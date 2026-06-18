@@ -1,9 +1,37 @@
 'use client'
 
-const MLB_TEAMS = [
-  'ARI','ATL','BAL','BOS','CHC','CWS','CIN','CLE','COL','DET',
-  'HOU','KC','LAA','LAD','MIA','MIL','MIN','NYM','NYY','ATH','OAK',
-  'PHI','PIT','SD','SF','SEA','STL','TB','TEX','TOR','WSH',
+// Display label → DB value (Retrosheet abbreviations)
+const MLB_TEAMS: { label: string; value: string }[] = [
+  { label: 'ARI', value: 'AZ'  },
+  { label: 'ATL', value: 'ATL' },
+  { label: 'BAL', value: 'BAL' },
+  { label: 'BOS', value: 'BOS' },
+  { label: 'CHC', value: 'CHC' },
+  { label: 'CWS', value: 'CWS' },
+  { label: 'CIN', value: 'CIN' },
+  { label: 'CLE', value: 'CLE' },
+  { label: 'COL', value: 'COL' },
+  { label: 'DET', value: 'DET' },
+  { label: 'HOU', value: 'HOU' },
+  { label: 'KC',  value: 'KC'  },
+  { label: 'LAA', value: 'LAA' },
+  { label: 'LAD', value: 'LAD' },
+  { label: 'MIA', value: 'MIA' },
+  { label: 'MIL', value: 'MIL' },
+  { label: 'MIN', value: 'MIN' },
+  { label: 'NYM', value: 'NYM' },
+  { label: 'NYY', value: 'NYY' },
+  { label: 'OAK', value: 'ATH' },
+  { label: 'PHI', value: 'PHI' },
+  { label: 'PIT', value: 'PIT' },
+  { label: 'SD',  value: 'SD'  },
+  { label: 'SF',  value: 'SF'  },
+  { label: 'SEA', value: 'SEA' },
+  { label: 'STL', value: 'STL' },
+  { label: 'TB',  value: 'TB'  },
+  { label: 'TEX', value: 'TEX' },
+  { label: 'TOR', value: 'TOR' },
+  { label: 'WSH', value: 'WSH' },
 ]
 
 interface Props {
@@ -23,7 +51,7 @@ export function TeamFilter({ value, onChange, label = 'Team' }: Props) {
       >
         <option value="">All Teams</option>
         {MLB_TEAMS.map(t => (
-          <option key={t} value={t}>{t}</option>
+          <option key={t.value} value={t.value}>{t.label}</option>
         ))}
       </select>
     </div>
