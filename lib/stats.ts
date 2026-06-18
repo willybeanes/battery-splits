@@ -38,9 +38,9 @@ function ipToDecimal(ip: number): number {
 }
 
 export function deriveRates(
-  hits: number, bb: number, so: number, hr: number, er: number, bf: number, ip: number
+  hits: number, bb: number, so: number, hr: number, er: number, bf: number, ip: number,
+  fipConst = 3.15
 ) {
-  const FIP_CONST = 3.15
   const ipDec = ipToDecimal(ip)  // convert baseball notation to true decimal
   const safeDiv = (n: number, d: number) => d ? n / d : null
   return {
@@ -48,6 +48,6 @@ export function deriveRates(
     whip: safeDiv(hits + bb, ipDec),
     k_pct: safeDiv(so * 100, bf),
     bb_pct: safeDiv(bb * 100, bf),
-    fip: ipDec ? (13 * hr + 3 * bb - 2 * so) / ipDec + FIP_CONST : null,
+    fip: ipDec ? (13 * hr + 3 * bb - 2 * so) / ipDec + fipConst : null,
   }
 }

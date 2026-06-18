@@ -68,7 +68,7 @@ async function fetchStatRows(
 }
 
 // Aggregate totals rows by pitcher_id across seasons
-function aggregatePitcherTotals(rows: Record<string, unknown>[]) {
+function aggregatePitcherTotals(rows: Record<string, unknown>[], fipConst?: number) {
   // Use most-recent season for name/team (higher season number wins)
   const map = new Map<number, { pitcher_id: number; pitcher_name: string; pitcher_team: string | null; season: number; bf: number; outs: number; hits: number; hr: number; bb: number; so: number; er: number }>()
   for (const r of rows) {
@@ -87,7 +87,8 @@ function aggregatePitcherTotals(rows: Record<string, unknown>[]) {
     a.so   += (r.so   as number) ?? 0
     a.er   += (r.er   as number) ?? 0
   }
-  return [...map.values()].map(a => ({ ...a, ip: outsToIp(a.outs), ...deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, outsToIp(a.outs)) }))
+  const fc = fipConst ?? 3.15
+  return [...map.values()].map(a => ({ ...a, ip: outsToIp(a.outs), ...deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, outsToIp(a.outs), fc) }))
 }
 
 async function getCatcherCountMap(db: DB, seasons: number[]): Promise<Map<number, number>> {
@@ -109,6 +110,23 @@ async function getCatcherMap(db: DB, seasons: number[]): Promise<Map<number, { n
   const map = new Map<number, { name: string; team: string | null }>()
   for (const c of data ?? []) map.set(c.mlbam_id, { name: c.name, team: c.team })
   return map
+}
+
+// Compute the season FIP constant from totals rows: league ERA − raw league FIP
+function computeLeagueFipConst(totalsRows: Record<string, unknown>[]): number {
+  let totalER = 0, totalOuts = 0, totalHR = 0, totalBB = 0, totalSO = 0
+  for (const r of totalsRows) {
+    totalER   += (r.er   as number) ?? 0
+    totalOuts += ipToOuts(Number(r.ip ?? 0))
+    totalHR   += (r.hr   as number) ?? 0
+    totalBB   += (r.bb   as number) ?? 0
+    totalSO   += (r.so   as number) ?? 0
+  }
+  const ipDec = totalOuts / 3
+  if (!ipDec) return 3.15
+  const leagueEra = (totalER / ipDec) * 9
+  const rawFip    = (13 * totalHR + 3 * totalBB - 2 * totalSO) / ipDec
+  return leagueEra - rawFip
 }
 
 function paginate<T>(rows: T[], page: number): { rows: T[]; total: number; page: number; pageSize: number } {
@@ -150,16 +168,22 @@ async function handlePitcherTab(
       if (pitcherId) query = query.eq('pitcher_id', pitcherId)
       query = query.order(sort, { ascending: dir === 'asc', nullsFirst: false })
       if (!exportCsv) query = (query as typeof query).range(from, to)
-      const [{ data, error, count }, catcherCountMap] = await Promise.all([query, getCatcherCountMap(db, seasons)])
+      const [{ data, error, count }, catcherCountMap, rawTotals] = await Promise.all([query, getCatcherCountMap(db, seasons), fetchStatRows(db, seasons, 'zero')])
       if (error) return NextResponse.json({ error: error.message }, { status: 500 })
-      const rows = (data ?? []).map((r: Record<string, unknown>) => ({ ...r, catcher_count: catcherCountMap.get(r.pitcher_id as number) ?? 0 }))
+      const fipConst = computeLeagueFipConst(rawTotals)
+      const rows = (data ?? []).map((r: Record<string, unknown>) => {
+        const ipDec = ipToOuts(Number(r.ip ?? 0)) / 3
+        const fip = ipDec ? Math.round(((13 * (r.hr as number) + 3 * (r.bb as number) - 2 * (r.so as number)) / ipDec + fipConst) * 100) / 100 : null
+        return { ...r, fip, catcher_count: catcherCountMap.get(r.pitcher_id as number) ?? 0 }
+      })
       if (exportCsv) return csvResponse(toCsv(PITCHER_CSV_COLS, rows), `battery-splits-pitchers-${season}.csv`)
       return NextResponse.json({ rows, total: count ?? 0, page, pageSize: PAGE_SIZE })
     }
 
     // Multi-season (or pitcherId filter): aggregate in memory
     const [rawTotals, catcherCountMap] = await Promise.all([fetchStatRows(db, seasons, 'zero'), getCatcherCountMap(db, seasons)])
-    const aggregated = aggregatePitcherTotals(rawTotals)
+    const fipConst = computeLeagueFipConst(rawTotals)
+    const aggregated = aggregatePitcherTotals(rawTotals, fipConst)
     const filtered = aggregated.filter(r => {
       if (r.bf < minBf || r.ip < minIp) return false
       if (team && r.pitcher_team !== team) return false
@@ -178,11 +202,12 @@ async function handlePitcherTab(
       fetchStatRows(db, seasons, catcherId),
     ])
     const catcherCountMap = await getCatcherCountMap(db, seasons)
+    const fipConst = computeLeagueFipConst(rawTotals)
     // Aggregate totals to determine qualifying threshold
-    const aggregated = aggregatePitcherTotals(rawTotals)
+    const aggregated = aggregatePitcherTotals(rawTotals, fipConst)
     const qualIds = new Set(aggregated.filter(r => r.bf >= minBf && r.ip >= minIp && (!team || r.pitcher_team === team)).map(r => r.pitcher_id))
     // Aggregate was-rows by pitcher
-    const wasAgg = aggregatePitcherTotals(wasRowsRaw)
+    const wasAgg = aggregatePitcherTotals(wasRowsRaw, fipConst)
     const filtered = wasAgg.filter(r => qualIds.has(r.pitcher_id))
     const sorted2 = sortRows(
       filtered.map(r => ({ ...r, catcher_count: catcherCountMap.get(r.pitcher_id) ?? 0 })) as unknown as Record<string, unknown>[],
@@ -203,8 +228,9 @@ async function handlePitcherTab(
     ])
     const { data: catcherData } = await db.from('catchers').select('name').eq('mlbam_id', catcherId).eq('season', season).single()
 
-    const totalsAgg = aggregatePitcherTotals(rawTotals)
-    const wasAgg = new Map(aggregatePitcherTotals(wasRowsRaw).map(r => [r.pitcher_id, r]))
+    const fipConst = computeLeagueFipConst(rawTotals)
+    const totalsAgg = aggregatePitcherTotals(rawTotals, fipConst)
+    const wasAgg = new Map(aggregatePitcherTotals(wasRowsRaw, fipConst).map(r => [r.pitcher_id, r]))
 
     const rows = []
     for (const total of totalsAgg) {
@@ -222,7 +248,7 @@ async function handlePitcherTab(
         pitcher_id: total.pitcher_id, pitcher_name: total.pitcher_name,
         pitcher_team: total.pitcher_team, bf, ip, hits, hr, bb, so, er, xfip: null,
         catcher_count: catcherCountMap.get(total.pitcher_id) ?? 0,
-        ...deriveRates(hits, bb, so, hr, er, bf, ip),
+        ...deriveRates(hits, bb, so, hr, er, bf, ip, fipConst),
       })
     }
     const catcherBf = [...wasAgg.values()].reduce((s, r) => s + r.bf, 0)
@@ -242,10 +268,12 @@ async function handleCatcherTab(
 ) {
   const { seasons, team, minBf, minIp, pitcherId, sort, dir, page, exportCsv } = params
 
-  const [catcherMap, rawRows] = await Promise.all([
+  const [catcherMap, rawRows, rawTotals] = await Promise.all([
     getCatcherMap(db, seasons),
     fetchStatRows(db, seasons, 'nonzero'),
+    fetchStatRows(db, seasons, 'zero'),
   ])
+  const fipConst = computeLeagueFipConst(rawTotals)
 
   const agg = new Map<number, { catcher_id: number; catcher_name: string; catcher_team: string | null; bf: number; outs: number; hits: number; hr: number; bb: number; so: number; er: number }>()
   for (const r of rawRows) {
@@ -268,7 +296,7 @@ async function handleCatcherTab(
   const rows = [...agg.values()]
     .map(r => ({ ...r, ip: outsToIp(r.outs) }))
     .filter(r => r.bf >= minBf && r.ip >= minIp)
-    .map(r => ({ ...r, ...deriveRates(r.hits, r.bb, r.so, r.hr, r.er, r.bf, r.ip) }))
+    .map(r => ({ ...r, ...deriveRates(r.hits, r.bb, r.so, r.hr, r.er, r.bf, r.ip, fipConst) }))
 
   const sorted = sortRows(rows, sort, dir)
   const CATCHER_CSV_COLS = ['catcher_id', 'catcher_name', 'catcher_team', 'bf', 'ip', 'era', 'whip', 'k_pct', 'bb_pct', 'fip', 'hits', 'hr', 'bb', 'so', 'er']
@@ -312,8 +340,9 @@ async function handleBatteryTab(
 
   // Build pitcher aggregate FIP map from totals rows (works for single and multi-season)
   const pitcherTotalsRaw = await fetchStatRows(db, seasons, 'zero')
+  const fipConst = computeLeagueFipConst(pitcherTotalsRaw)
   const pitcherFipMap = new Map<number, number>()
-  for (const t of aggregatePitcherTotals(pitcherTotalsRaw)) {
+  for (const t of aggregatePitcherTotals(pitcherTotalsRaw, fipConst)) {
     if (t.fip != null) pitcherFipMap.set(t.pitcher_id, t.fip)
   }
 
@@ -325,7 +354,7 @@ async function handleBatteryTab(
   const diffs: number[] = []
   for (const a of agg.values()) {
     const ip = outsToIp(a.outs)
-    const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip).fip
+    const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip, fipConst).fip
     const seasonFip = pitcherFipMap.get(a.pitcher_id)
     if (ip >= chemIpMin && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
   }
@@ -345,7 +374,7 @@ async function handleBatteryTab(
     .map(a => {
       const ip = outsToIp(a.outs)
       const meta = catcherMap.get(a.catcher_id)
-      const rates = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip)
+      const rates = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip, fipConst)
       let chem_score: number | null = null
       if (ip >= chemIpMin && rates.fip != null) {
         const seasonFip = pitcherFipMap.get(a.pitcher_id)
@@ -407,8 +436,9 @@ async function handleTeamsTab(db: DB, params: { seasons: number[] }) {
   }
 
   // Build pitcher aggregate FIP map
+  const fipConst = computeLeagueFipConst(pitcherTotalsRaw)
   const pitcherFipMap = new Map<number, number>()
-  for (const t of aggregatePitcherTotals(pitcherTotalsRaw)) {
+  for (const t of aggregatePitcherTotals(pitcherTotalsRaw, fipConst)) {
     if (t.fip != null) pitcherFipMap.set(t.pitcher_id, t.fip)
   }
 
@@ -418,7 +448,7 @@ async function handleTeamsTab(db: DB, params: { seasons: number[] }) {
   const diffs: number[] = []
   for (const a of agg.values()) {
     const ip = outsToIp(a.outs)
-    const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip).fip
+    const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip, fipConst).fip
     const seasonFip = pitcherFipMap.get(a.pitcher_id)
     if (ip >= chemIpMin && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
   }
@@ -443,7 +473,7 @@ async function handleTeamsTab(db: DB, params: { seasons: number[] }) {
   for (const a of agg.values()) {
     if (!a.pitcher_team) continue
     const ip = outsToIp(a.outs)
-    const rates = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip)
+    const rates = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip, fipConst)
     if (ip < chemIpMin || rates.fip == null) continue
     const seasonFip = pitcherFipMap.get(a.pitcher_id)
     if (seasonFip == null) continue

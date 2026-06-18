@@ -8,6 +8,13 @@ function ipToOuts(ip: number): number {
 function outsToIp(outs: number): number {
   return Math.floor(outs / 3) + (outs % 3) / 10
 }
+function computeFipConst(totals: { hr: number; bb: number; so: number; ip: number; er: number }[]): number {
+  let tER = 0, tOuts = 0, tHR = 0, tBB = 0, tSO = 0
+  for (const r of totals) { tER += r.er; tOuts += ipToOuts(r.ip); tHR += r.hr; tBB += r.bb; tSO += r.so }
+  const ipDec = tOuts / 3
+  if (!ipDec) return 3.15
+  return (tER / ipDec) * 9 - (13 * tHR + 3 * tBB - 2 * tSO) / ipDec
+}
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
@@ -21,11 +28,13 @@ export async function GET(req: NextRequest) {
   if (!pitcher_id) return NextResponse.json([], { status: 400 })
 
   const db = createServiceClient()
-  const [{ data: splits }, { data: catchers }] = await Promise.all([
+  const [{ data: splits }, { data: catchers }, { data: leagueTotals }] = await Promise.all([
     db.from('pitcher_catcher_stats').select('*')
       .eq('pitcher_id', pitcher_id).in('season', seasons).neq('catcher_id', 0),
     db.from('catchers').select('mlbam_id,name,team,season').in('season', seasons).order('season', { ascending: true }),
+    db.from('pitcher_catcher_stats').select('hr,bb,so,ip,er').in('season', seasons).eq('catcher_id', 0),
   ])
+  const fipConst = computeFipConst((leagueTotals ?? []) as { hr: number; bb: number; so: number; ip: number; er: number }[])
 
   // Use most recent season's name/team per catcher
   const catcherMap = new Map<number, { name: string; team: string | null }>()
@@ -59,7 +68,7 @@ export async function GET(req: NextRequest) {
         whip:  a.outs > 0 ? Math.round(((a.hits + a.bb) / (a.outs / 3)) * 1000) / 1000 : null,
         k_pct: a.bf   > 0 ? Math.round((a.so / a.bf) * 1000) / 10 : null,
         bb_pct:a.bf   > 0 ? Math.round((a.bb / a.bf) * 1000) / 10 : null,
-        fip: a.outs > 0 ? Math.round(((13 * a.hr + 3 * a.bb - 2 * a.so) / (a.outs / 3) + 3.15) * 100) / 100 : null,
+        fip: a.outs > 0 ? Math.round(((13 * a.hr + 3 * a.bb - 2 * a.so) / (a.outs / 3) + fipConst) * 100) / 100 : null,
         xfip: null,
       }
     })
