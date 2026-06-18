@@ -1,6 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { createServiceClient } from '@/lib/supabase'
 
+function deaccent(s: string) {
+  return s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase()
+}
+
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const q = searchParams.get('q') ?? ''
@@ -14,13 +18,15 @@ export async function GET(req: NextRequest) {
     .select('pitcher_id, pitcher_name, pitcher_team')
     .eq('season', season)
     .eq('catcher_id', 0)
-    .ilike('pitcher_name', `%${q}%`)
-    .order('pitcher_name')
-    .limit(10)
 
   if (error) return NextResponse.json({ error: error.message }, { status: 500 })
 
-  return NextResponse.json(
-    (data ?? []).map(r => ({ mlbam_id: r.pitcher_id, name: r.pitcher_name, team: r.pitcher_team }))
-  )
+  const needle = deaccent(q)
+  const results = (data ?? [])
+    .filter(r => deaccent(r.pitcher_name ?? '').includes(needle))
+    .sort((a, b) => (a.pitcher_name ?? '').localeCompare(b.pitcher_name ?? ''))
+    .slice(0, 10)
+    .map(r => ({ mlbam_id: r.pitcher_id, name: r.pitcher_name, team: r.pitcher_team }))
+
+  return NextResponse.json(results)
 }
