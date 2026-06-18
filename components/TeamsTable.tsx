@@ -56,7 +56,7 @@ function BatteryRow({ entry, kind }: { entry: TeamBatteryEntry; kind: 'best' | '
               src={headshot(entry.pitcher_id)}
               alt={entry.pitcher_name}
               width={40} height={40}
-              className="object-cover object-top w-full h-full"
+              className="object-cover w-full h-full" style={{ objectPosition: 'center 15%' }}
               unoptimized
             />
           </div>
@@ -92,7 +92,7 @@ function BatteryRow({ entry, kind }: { entry: TeamBatteryEntry; kind: 'best' | '
               src={headshot(entry.catcher_id)}
               alt={entry.catcher_name}
               width={40} height={40}
-              className="object-cover object-top w-full h-full"
+              className="object-cover w-full h-full" style={{ objectPosition: 'center 15%' }}
               unoptimized
             />
           </div>
