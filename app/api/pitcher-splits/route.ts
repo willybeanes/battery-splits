@@ -59,7 +59,8 @@ export async function GET(req: NextRequest) {
         whip:  a.outs > 0 ? Math.round(((a.hits + a.bb) / (a.outs / 3)) * 1000) / 1000 : null,
         k_pct: a.bf   > 0 ? Math.round((a.so / a.bf) * 1000) / 10 : null,
         bb_pct:a.bf   > 0 ? Math.round((a.bb / a.bf) * 1000) / 10 : null,
-        fip: null, xfip: null,
+        fip: a.outs > 0 ? Math.round(((13 * a.hr + 3 * a.bb - 2 * a.so) / (a.outs / 3) + 3.15) * 100) / 100 : null,
+        xfip: null,
       }
     })
 
