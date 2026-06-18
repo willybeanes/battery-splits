@@ -36,6 +36,9 @@ export function GamesTable({ rows, loading }: Props) {
             <th className="py-2 px-3 text-right">HR</th>
             <th className="py-2 px-3 text-right">ERA</th>
             <th className="py-2 px-3 text-right">FIP</th>
+            <th className="py-2 px-3 text-right">Stf+</th>
+            <th className="py-2 px-3 text-right">Loc+</th>
+            <th className="py-2 px-3 text-right">Pit+</th>
           </tr>
         </thead>
         <tbody>
@@ -56,6 +59,9 @@ export function GamesTable({ rows, loading }: Props) {
               <td className="py-2 px-3 text-right font-mono text-[#555]">{row.hr}</td>
               <td className="py-2 px-3 text-right font-mono text-[#444]">{fmt(row.era)}</td>
               <td className="py-2 px-3 text-right font-mono text-[#444]">{fmt(row.fip)}</td>
+              <td className="py-2 px-3 text-right font-mono text-[#444]">{row.stuff_plus ?? '—'}</td>
+              <td className="py-2 px-3 text-right font-mono text-[#444]">{row.location_plus ?? '—'}</td>
+              <td className="py-2 px-3 text-right font-mono text-[#444]">{row.pitching_plus ?? '—'}</td>
             </tr>
           ))}
         </tbody>

@@ -171,6 +171,9 @@ export interface GameLogRow {
   er: number
   era: number | null
   fip: number | null
+  stuff_plus: number | null
+  location_plus: number | null
+  pitching_plus: number | null
 }
 
 export interface GameLogResponse {
