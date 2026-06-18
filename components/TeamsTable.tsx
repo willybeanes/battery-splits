@@ -6,7 +6,7 @@ import { fmtIp, fmt } from '@/lib/stats'
 
 // Team abbreviation → MLB team ID for logo URLs
 const TEAM_IDS: Record<string, number> = {
-  ARI: 109, ATL: 144, BAL: 110, BOS: 111, CHC: 112, CHW: 145, CWS: 145,
+  ARI: 109, AZ: 109, ATL: 144, BAL: 110, BOS: 111, CHC: 112, CHW: 145, CWS: 145,
   CIN: 113, CLE: 114, CLG: 114, COL: 115, DET: 116, HOU: 117,
   KC: 118, KCR: 118, LAA: 108, LAD: 119, MIA: 146, MIL: 158,
   MIN: 142, NYM: 121, NYY: 147, OAK: 133, ATH: 133,
