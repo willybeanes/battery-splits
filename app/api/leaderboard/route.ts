@@ -317,14 +317,17 @@ async function handleBatteryTab(
     if (t.fip != null) pitcherFipMap.set(t.pitcher_id, t.fip)
   }
 
-  // Normalize diffs across all qualifying combos (≥20 IP together)
+  // Use lower IP threshold for current (in-progress) season
+  const chemIpMin = seasons.includes(2026) ? 20 : 50
+
+  // Normalize diffs across all qualifying combos
   let chemMean = 0, chemStd = 1
   const diffs: number[] = []
   for (const a of agg.values()) {
     const ip = outsToIp(a.outs)
     const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip).fip
     const seasonFip = pitcherFipMap.get(a.pitcher_id)
-    if (ip >= 20 && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
+    if (ip >= chemIpMin && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
   }
   if (diffs.length > 1) {
     chemMean = diffs.reduce((s, d) => s + d, 0) / diffs.length
@@ -344,7 +347,7 @@ async function handleBatteryTab(
       const meta = catcherMap.get(a.catcher_id)
       const rates = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip)
       let chem_score: number | null = null
-      if (ip >= 20 && rates.fip != null) {
+      if (ip >= chemIpMin && rates.fip != null) {
         const seasonFip = pitcherFipMap.get(a.pitcher_id)
         if (seasonFip != null) {
           const z = ((seasonFip - rates.fip) - chemMean) / chemStd
@@ -409,13 +412,15 @@ async function handleTeamsTab(db: DB, params: { seasons: number[] }) {
     if (t.fip != null) pitcherFipMap.set(t.pitcher_id, t.fip)
   }
 
-  // Compute diffs for ≥20 IP combos
+  const chemIpMin = seasons.includes(2026) ? 20 : 50
+
+  // Compute diffs for qualifying combos
   const diffs: number[] = []
   for (const a of agg.values()) {
     const ip = outsToIp(a.outs)
     const comboFip = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip).fip
     const seasonFip = pitcherFipMap.get(a.pitcher_id)
-    if (ip >= 20 && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
+    if (ip >= chemIpMin && seasonFip != null && comboFip != null) diffs.push(seasonFip - comboFip)
   }
 
   let chemMean = 0, chemStd = 1
@@ -439,7 +444,7 @@ async function handleTeamsTab(db: DB, params: { seasons: number[] }) {
     if (!a.pitcher_team) continue
     const ip = outsToIp(a.outs)
     const rates = deriveRates(a.hits, a.bb, a.so, a.hr, a.er, a.bf, ip)
-    if (ip < 20 || rates.fip == null) continue
+    if (ip < chemIpMin || rates.fip == null) continue
     const seasonFip = pitcherFipMap.get(a.pitcher_id)
     if (seasonFip == null) continue
     const z = ((seasonFip - rates.fip) - chemMean) / chemStd

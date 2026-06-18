@@ -201,7 +201,7 @@ function HomeContent() {
             <div className="flex flex-wrap items-center gap-4">
               <SeasonToggle value={seasons} onChange={handleSeasonsChange} />
               <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
-              <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />
+              {tab !== 'teams' && <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />}
               {tab !== 'teams' && <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />}
               {tab !== 'teams' && <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} hideQualified={tab === 'battery'} />}
               {tab !== 'teams' && <button
