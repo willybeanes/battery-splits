@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import {
   FilterMode, Catcher, Pitcher, SortDir, TabName,
   LeaderboardResponse, CatcherLeaderboardResponse, BatteryLeaderboardResponse, TeamsLeaderboardResponse,
+  GameLogResponse,
 } from '@/lib/types'
 import { SeasonToggle }    from '@/components/SeasonToggle'
 import { CatcherFilter }   from '@/components/CatcherFilter'
@@ -18,6 +19,7 @@ import { LeaderboardTable } from '@/components/LeaderboardTable'
 import { CatcherTable }    from '@/components/CatcherTable'
 import { BatteryTable }    from '@/components/BatteryTable'
 import { TeamsTable }      from '@/components/TeamsTable'
+import { GamesTable }      from '@/components/GamesTable'
 
 type AnyResponse = LeaderboardResponse | CatcherLeaderboardResponse | BatteryLeaderboardResponse | TeamsLeaderboardResponse
 
@@ -47,10 +49,12 @@ function HomeContent() {
   const [sortCol, setSortCol] = useState(sp.get('sort') ?? 'fip')
   const [sortDir, setSortDir] = useState<SortDir>((sp.get('dir') as SortDir) ?? 'asc')
   const [page,    setPage]    = useState(Math.max(1, parseInt(sp.get('page') ?? '1')))
-  const [data,       setData]       = useState<AnyResponse | null>(null)
-  const [loading,    setLoading]    = useState(true)
-  const [error,      setError]      = useState<string | null>(null)
-  const [showSearch, setShowSearch] = useState(false)
+  const [data,        setData]        = useState<AnyResponse | null>(null)
+  const [loading,     setLoading]     = useState(true)
+  const [error,       setError]       = useState<string | null>(null)
+  const [showSearch,  setShowSearch]  = useState(false)
+  const [gameLogData, setGameLogData] = useState<GameLogResponse | null>(null)
+  const [gameLogLoading, setGameLogLoading] = useState(false)
 
   // Most recent season drives qualifiedIp and search lookups
   const season = Math.max(...seasons)
@@ -111,6 +115,18 @@ function HomeContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [tab, seasons.join(','), team, minBf, minIp, catcher?.mlbam_id, pitcher?.mlbam_id, mode, sortCol, sortDir, page])
 
+  useEffect(() => {
+    if (tab !== 'games' || !pitcher) { setGameLogData(null); return }
+    let alive = true
+    setGameLogLoading(true)
+    fetch(`/api/game-log?pitcher_id=${pitcher.mlbam_id}`)
+      .then(res => res.json())
+      .then(json => { if (alive) { setGameLogData(json); setGameLogLoading(false) } })
+      .catch(() => { if (alive) setGameLogLoading(false) })
+    return () => { alive = false }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tab, pitcher?.mlbam_id])
+
   function handleTabChange(t: TabName) {
     setTab(t)
     setSortCol('fip')
@@ -149,6 +165,7 @@ function HomeContent() {
     if (tab === 'catcher') return `${base} · Pitcher stats by catcher`
     if (tab === 'battery') return `${base} · All pitcher–catcher combinations`
     if (tab === 'teams')   return `${base} · Best & worst chemistry battery by team`
+    if (tab === 'games')   return pitcher ? `2026 · ${pitcher.name} game log` : '2026 · Game Log'
     if (!catcher && !pitcher) return `${base} · All Pitchers`
     if (pitcher && !catcher) return `${base} · ${pitcher.name}`
     if (!catcher) return base
@@ -159,7 +176,7 @@ function HomeContent() {
     return base
   }
 
-  const total = data?.total ?? 0
+  const total = tab === 'games' ? (gameLogData?.total ?? 0) : (data?.total ?? 0)
 
   function buildExportUrl() {
     const params = new URLSearchParams({
@@ -199,12 +216,19 @@ function HomeContent() {
           <div className="px-5 pt-4 pb-3 border-b border-[#ece8e1] flex flex-col gap-3">
             {/* Row 1: season / team / thresholds + search toggle */}
             <div className="flex flex-wrap items-center gap-4">
-              {tab !== 'teams' && <SeasonToggle value={seasons} onChange={handleSeasonsChange} />}
+              {tab !== 'teams' && tab !== 'games' && <SeasonToggle value={seasons} onChange={handleSeasonsChange} />}
               <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
-              {tab !== 'teams' && <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />}
-              {tab !== 'teams' && <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />}
-              {tab !== 'teams' && <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} hideQualified={tab === 'battery'} />}
-              {tab !== 'teams' && <button
+              {tab !== 'teams' && tab !== 'games' && <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />}
+              {tab !== 'teams' && tab !== 'games' && <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />}
+              {tab !== 'teams' && tab !== 'games' && <MinIpFilter value={minIp} onChange={n => { setMinIp(n); setPage(1) }} hideQualified={tab === 'battery'} />}
+              {tab === 'games' && (
+                <PitcherFilter
+                  season={2026}
+                  selectedPitcher={pitcher}
+                  onPitcherChange={p => setPitcher(p)}
+                />
+              )}
+              {tab !== 'teams' && tab !== 'games' && <button
                 onClick={() => setShowSearch(s => !s)}
                 className="ml-auto flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-semibold text-[#888] hover:text-[#1a1a1a] transition-colors rounded-lg hover:bg-[#f5f2ed]"
               >
@@ -215,7 +239,7 @@ function HomeContent() {
               </button>}
             </div>
             {/* Row 2: pitcher / catcher search (collapsible) */}
-            {showSearch && tab !== 'teams' && (
+            {showSearch && tab !== 'teams' && tab !== 'games' && (
               <div className="flex flex-wrap items-center gap-4">
                 {tab !== 'catcher' && (
                   <PitcherFilter
@@ -251,11 +275,11 @@ function HomeContent() {
           <div className="px-5 py-3 flex items-center justify-between gap-3 flex-wrap">
             <div>
               <h2 className="text-sm font-bold text-[#1a1a1a]">{subtitle()}</h2>
-              {data && <p className="text-xs text-[#999] mt-0.5">{total.toLocaleString()} {tab === 'catcher' ? 'catchers' : tab === 'battery' ? 'combinations' : tab === 'teams' ? 'teams' : 'pitchers'}</p>}
+              {(tab === 'games' ? gameLogData : data) && <p className="text-xs text-[#999] mt-0.5">{total.toLocaleString()} {tab === 'catcher' ? 'catchers' : tab === 'battery' ? 'combinations' : tab === 'teams' ? 'teams' : tab === 'games' ? 'games' : 'pitchers'}</p>}
             </div>
             <div className="flex items-center gap-3">
-              {loading && <span className="text-xs text-[#999] animate-pulse">Loading…</span>}
-              {data && !loading && tab !== 'teams' && (
+              {(loading || gameLogLoading) && <span className="text-xs text-[#999] animate-pulse">Loading…</span>}
+              {data && !loading && tab !== 'teams' && tab !== 'games' && (
                 <a
                   href={buildExportUrl()}
                   download
@@ -305,6 +329,11 @@ function HomeContent() {
                 rows={(data as TeamsLeaderboardResponse)?.rows ?? []}
                 loading={loading}
               />
+            )}
+            {tab === 'games' && (
+              pitcher
+                ? <GamesTable rows={gameLogData?.rows ?? []} loading={gameLogLoading} />
+                : <p className="text-center text-sm text-[#aaa] py-12">Search for a pitcher above to see their 2026 game log.</p>
             )}
           </div>
         </div>

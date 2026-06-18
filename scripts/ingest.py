@@ -762,23 +762,24 @@ def mlb_get(path: str, **params) -> dict:
     resp.raise_for_status()
     return resp.json()
 
-def get_season_game_pks(season: int) -> list[int]:
+def get_season_game_pks(season: int) -> list[tuple[int, str]]:
     data = mlb_get("/api/v1/schedule",
                    sportId=1, season=season, gameType="R",
-                   fields="dates,games,gamePk,status,abstractGameState")
+                   fields="dates,date,games,gamePk,status,abstractGameState")
     pks = []
     for d in data.get("dates", []):
+        date_str = d.get("date", "")
         for g in d.get("games", []):
             if g.get("status", {}).get("abstractGameState") == "Final":
-                pks.append(g["gamePk"])
+                pks.append((g["gamePk"], date_str))
     return pks
 
-def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
-    """Returns (pa_rows, {mlbam_id: name})."""
+def process_mlb_game(game_pk: int, game_date: str = "") -> tuple[list[dict], dict[int, str], dict]:
+    """Returns (pa_rows, {mlbam_id: name}, game_meta)."""
     try:
         bs = mlb_get(f"/api/v1/game/{game_pk}/boxscore")
     except Exception:
-        return [], {}
+        return [], {}, {}
 
     player_team:  dict[int, str] = {}
     player_names: dict[int, str] = {}
@@ -786,10 +787,12 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
 
     away_id = bs["teams"]["away"]["team"]["id"]
     home_id = bs["teams"]["home"]["team"]["id"]
+    team_abbr: dict[int, str] = {}  # team_id → abbreviation
 
     for side, tid in (("away", away_id), ("home", home_id)):
         team_data = bs["teams"][side]
         abbr      = team_data["team"].get("abbreviation", "")
+        team_abbr[tid] = abbr
         for p in team_data.get("players", {}).values():
             pid   = p["person"]["id"]
             player_team[pid]  = abbr
@@ -811,10 +814,17 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
         for p in bs["teams"][side].get("players", {}).values():
             player_tid[p["person"]["id"]] = tid
 
+    game_meta = {
+        "game_pk":   game_pk,
+        "game_date": game_date,
+        "away_team": team_abbr.get(away_id, ""),
+        "home_team": team_abbr.get(home_id, ""),
+    }
+
     try:
         pbp = mlb_get(f"/api/v1/game/{game_pk}/playByPlay")
     except Exception:
-        return [], player_names
+        return [], player_names, game_meta
 
     pas: list[dict]  = []
     prev_score = {"away": 0, "home": 0}
@@ -858,12 +868,14 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
             catcher_id = current_catcher.get(fielding_tid)
             if pitcher_id and catcher_id:
                 pas.append({
-                    "season":       None,
-                    "pitcher_id":   pitcher_id,
-                    "catcher_id":   catcher_id,
-                    "pitcher_team": player_team.get(pitcher_id),
-                    "is_batter_pa": False,
-                    "outs":         baserunning_outs,
+                    "season":        None,
+                    "game_pk":       game_pk,
+                    "game_date":     game_date,
+                    "pitcher_id":    pitcher_id,
+                    "catcher_id":    catcher_id,
+                    "pitcher_team":  player_team.get(pitcher_id),
+                    "is_batter_pa":  False,
+                    "outs":          baserunning_outs,
                     "hits": 0, "hr": 0, "bb": 0, "hbp": 0, "so": 0, "runs": 0,
                 })
         if half == "top":
@@ -905,6 +917,8 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
 
         pas.append({
             "season":       None,    # filled by caller
+            "game_pk":      game_pk,
+            "game_date":    game_date,
             "pitcher_id":   pitcher_id,
             "catcher_id":   catcher_id,
             "pitcher_team": player_team.get(pitcher_id),
@@ -957,6 +971,8 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
             if allocated:
                 pas.append({
                     "season":       None,
+                    "game_pk":      game_pk,
+                    "game_date":    game_date,
                     "pitcher_id":   pid,
                     "catcher_id":   cid,
                     "pitcher_team": player_team.get(pid),
@@ -976,6 +992,8 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
                 best_cid = max(pairs, key=lambda x: x[1])[0]
                 pas.append({
                     "season":       None,
+                    "game_pk":      game_pk,
+                    "game_date":    game_date,
                     "pitcher_id":   pid,
                     "catcher_id":   best_cid,
                     "pitcher_team": player_team.get(pid),
@@ -984,7 +1002,81 @@ def process_mlb_game(game_pk: int) -> tuple[list[dict], dict[int, str]]:
                     "runs": remainder,
                 })
 
-    return pas, player_names
+    return pas, player_names, game_meta
+
+def aggregate_game_logs(all_pas: list[dict], all_names: dict[int, str], season: int,
+                        game_metas: dict[int, dict]) -> list[dict]:
+    """Build one row per (game, pitcher) with primary catcher and stats."""
+    # Aggregate per (game_pk, pitcher_id, catcher_id)
+    index: dict[tuple, dict] = {}
+    for p in all_pas:
+        gk  = p.get("game_pk")
+        pid = p["pitcher_id"]
+        cid = p["catcher_id"]
+        if not gk:
+            continue
+        key = (gk, pid, cid)
+        if key not in index:
+            meta = game_metas.get(gk, {})
+            pt   = p.get("pitcher_team", "") or ""
+            opp  = meta.get("home_team", "") if pt == meta.get("away_team", "") else meta.get("away_team", "")
+            index[key] = {
+                "game_pk": gk, "game_date": p.get("game_date", ""),
+                "season": season,
+                "pitcher_id": pid, "catcher_id": cid,
+                "pitcher_team": pt, "opponent_team": opp,
+                "bf": 0, "outs": 0, "hits": 0, "hr": 0, "bb": 0, "so": 0, "er": 0,
+            }
+        s = index[key]
+        if p.get("is_batter_pa"):
+            s["bf"]   += 1
+            s["hits"] += p.get("hits", 0)
+            s["hr"]   += p.get("hr",   0)
+            s["bb"]   += p.get("bb",   0) + p.get("hbp", 0)
+            s["so"]   += p.get("so",   0)
+        s["outs"] += p.get("outs", 0)
+        s["er"]   += p.get("runs", 0)
+
+    # For each (game, pitcher), keep only the catcher with most BF
+    best: dict[tuple, dict] = {}
+    for (gk, pid, _cid), s in index.items():
+        key2 = (gk, pid)
+        if key2 not in best or s["bf"] > best[key2]["bf"]:
+            best[key2] = s
+
+    rows = []
+    for s in best.values():
+        ip_dec = s["outs"] / 3
+        era = round((s["er"] / ip_dec) * 9, 2) if ip_dec else None
+        rows.append({
+            "season":        s["season"],
+            "game_pk":       s["game_pk"],
+            "game_date":     s["game_date"],
+            "pitcher_id":    s["pitcher_id"],
+            "pitcher_name":  all_names.get(s["pitcher_id"], f"Player {s['pitcher_id']}"),
+            "pitcher_team":  s["pitcher_team"],
+            "opponent_team": s["opponent_team"],
+            "catcher_id":    s["catcher_id"],
+            "catcher_name":  all_names.get(s["catcher_id"], f"Catcher {s['catcher_id']}"),
+            "bf":   s["bf"],
+            "ip":   outs_to_ip(s["outs"]),
+            "hits": s["hits"],
+            "hr":   s["hr"],
+            "bb":   s["bb"],
+            "so":   s["so"],
+            "er":   s["er"],
+            "era":  era,
+            "fip":  None,  # filled after FIP constant is known
+        })
+    return rows
+
+def upsert_game_logs(db: Client, rows: list[dict], batch: int = 500):
+    for i in range(0, len(rows), batch):
+        chunk = rows[i:i + batch]
+        db.table("pitcher_game_logs").upsert(
+            chunk, on_conflict="season,game_pk,pitcher_id"
+        ).execute()
+        print(f"  Upserted {min(i + batch, len(rows))}/{len(rows)} game log rows")
 
 def ingest_mlbapi_season(season: int, db: Client):
     print(f"\n=== Season {season} (MLB Stats API) ===")
@@ -998,14 +1090,15 @@ def ingest_mlbapi_season(season: int, db: Client):
 
     print(f"  {len(pks)} completed games.")
 
-    all_pas:   list[dict]    = []
-    all_names: dict[int, str] = {}
+    all_pas:    list[dict]      = []
+    all_names:  dict[int, str]  = {}
+    game_metas: dict[int, dict] = {}
 
-    for i, gk in enumerate(pks, 1):
+    for i, (gk, game_date) in enumerate(pks, 1):
         if i % 100 == 0 or i == 1:
             print(f"  Game {i}/{len(pks)}…", flush=True)
         try:
-            pas, names = process_mlb_game(gk)
+            pas, names, meta = process_mlb_game(gk, game_date)
         except Exception as e:
             print(f"  Warning: game {gk} failed: {e}")
             continue
@@ -1013,6 +1106,7 @@ def ingest_mlbapi_season(season: int, db: Client):
             p["season"] = season
         all_pas.extend(pas)
         all_names.update(names)
+        game_metas[gk] = meta
         time.sleep(0.05)    # ~20 req/s
 
     if not all_pas:
@@ -1048,6 +1142,11 @@ def ingest_mlbapi_season(season: int, db: Client):
             })
     upsert_catchers(db, catcher_records)
 
+    print(f"  Building game logs…")
+    game_log_rows = aggregate_game_logs(all_pas, all_names, season, game_metas)
+    print(f"  {len(game_log_rows)} game log rows. Upserting…")
+    upsert_game_logs(db, game_log_rows)
+
 # ── DB helpers ────────────────────────────────────────────────────────────────
 
 def upsert_stats(db: Client, rows: list[dict], batch: int = 500):
@@ -1071,6 +1170,7 @@ def has_data(db: Client, season: int) -> bool:
 def delete_season(db: Client, season: int):
     db.table("pitcher_catcher_stats").delete().eq("season", season).execute()
     db.table("catchers").delete().eq("season", season).execute()
+    db.table("pitcher_game_logs").delete().eq("season", season).execute()
     print(f"  Deleted existing {season} data.")
 
 # ── Entry point ───────────────────────────────────────────────────────────────

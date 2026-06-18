@@ -1,6 +1,6 @@
 export type Season = number
 export type FilterMode = 'all' | 'was' | 'wasnt'
-export type TabName = 'pitcher' | 'catcher' | 'battery' | 'teams'
+export type TabName = 'pitcher' | 'catcher' | 'battery' | 'teams' | 'games'
 export type SortDir = 'asc' | 'desc'
 export type SortCol = string
 
@@ -148,5 +148,32 @@ export interface TeamChemRow {
 
 export interface TeamsLeaderboardResponse {
   rows: TeamChemRow[]
+  total: number
+}
+
+export interface GameLogRow {
+  id: number
+  season: number
+  game_pk: number
+  game_date: string
+  pitcher_id: number
+  pitcher_name: string
+  pitcher_team: string | null
+  opponent_team: string | null
+  catcher_id: number
+  catcher_name: string | null
+  bf: number
+  ip: number
+  hits: number
+  hr: number
+  bb: number
+  so: number
+  er: number
+  era: number | null
+  fip: number | null
+}
+
+export interface GameLogResponse {
+  rows: GameLogRow[]
   total: number
 }
