@@ -21,7 +21,7 @@ const MLB_TEAMS: { label: string; value: string }[] = [
   { label: 'MIN', value: 'MIN' },
   { label: 'NYM', value: 'NYM' },
   { label: 'NYY', value: 'NYY' },
-  { label: 'OAK', value: 'ATH' },
+  { label: 'ATH', value: 'ATH' },
   { label: 'PHI', value: 'PHI' },
   { label: 'PIT', value: 'PIT' },
   { label: 'SD',  value: 'SD'  },
