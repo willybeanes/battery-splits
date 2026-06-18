@@ -1,5 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
+import { readFileSync } from 'fs'
+import { join } from 'path'
 import { createServiceClient } from '@/lib/supabase'
+
+let mlbamToFg: Record<string, { fg: number }> | null = null
+function getFgId(mlbamId: number): number | null {
+  if (!mlbamToFg) {
+    try {
+      mlbamToFg = JSON.parse(readFileSync(join(process.cwd(), 'public', 'mlbam-fg-map.json'), 'utf-8'))
+    } catch { mlbamToFg = {} }
+  }
+  return mlbamToFg![String(mlbamId)]?.fg ?? null
+}
 
 function ipToOuts(ip: number): number {
   const innings = Math.floor(ip)
@@ -19,14 +31,7 @@ const FG_PROXY = 'https://fg-proxy.vercel.app/api/fg-gamelog'
 async function fetchFangraphsStuff(mlbamId: number): Promise<Map<string, { stuff_plus: number | null; location_plus: number | null; pitching_plus: number | null }>> {
   const map = new Map<string, { stuff_plus: number | null; location_plus: number | null; pitching_plus: number | null }>()
   try {
-    // Resolve MLBAM → Fangraphs player ID via the "sa{id}" alias
-    const infoRes = await fetch(
-      `${FG_PROXY}?path=/api/players/player&playerid=sa${mlbamId}`,
-      { next: { revalidate: 3600 } }
-    )
-    if (!infoRes.ok) return map
-    const info = await infoRes.json()
-    const fgid = Array.isArray(info) ? info[0]?.playerid : info?.playerid
+    const fgid = getFgId(mlbamId)
     if (!fgid) return map
 
     // Fetch Stuff+/Location+/Pitching+ game log (type=52)
@@ -36,17 +41,18 @@ async function fetchFangraphsStuff(mlbamId: number): Promise<Map<string, { stuff
     )
     if (!logRes.ok) return map
     const log = await logRes.json()
-    const games: Record<string, unknown>[] = Array.isArray(log) ? log : (log?.mlbgamelog ?? log?.data ?? [])
+    const games: Record<string, unknown>[] = Array.isArray(log) ? log : (log?.mlb ?? log?.data ?? [])
 
     for (const g of games) {
-      // Fangraphs date field is typically "Date" in "YYYY-MM-DD" or "M/D/YYYY"
-      const rawDate = (g['Date'] ?? g['date'] ?? '') as string
+      // Date field contains an HTML anchor: <a href="...date=2026-06-15&...">2026-06-15</a>
+      // Extract ISO date from the href param or from gamedate field
+      const rawDate = (g['gamedate'] ?? g['Date'] ?? '') as string
       const isoDate = normalizeDate(rawDate)
       if (!isoDate) continue
       map.set(isoDate, {
-        stuff_plus:    toNum(g['Stuff+']),
-        location_plus: toNum(g['Location+']),
-        pitching_plus: toNum(g['Pitching+']),
+        stuff_plus:    toNum(g['sp_stuff']),
+        location_plus: toNum(g['sp_location']),
+        pitching_plus: toNum(g['sp_pitching']),
       })
     }
   } catch {
