@@ -293,10 +293,43 @@ async function handleCatcherTab(
     a.er   += (r.er   as number) ?? 0
   }
 
+  // Catcher-level model grades — pitch-weighted avg from game logs (2026 only)
+  const catcherGradeMap = new Map<number, { catcher_stuff_plus: number | null; catcher_loc_plus: number | null; catcher_pitching_plus: number | null }>()
+  if (seasons.includes(2026)) {
+    const { data: glRows } = await db.from('pitcher_game_logs')
+      .select('catcher_id,sp_stuff,sp_location,sp_pitching,pitches_fg')
+      .eq('season', 2026)
+      .not('sp_location', 'is', null)
+    type GlAcc = { stuff: number; loc: number; pit: number; p: number }
+    const glAgg = new Map<number, GlAcc>()
+    for (const r of glRows ?? []) {
+      const cid = r.catcher_id as number
+      const pitches = (r.pitches_fg as number) || 0
+      if (!pitches) continue
+      if (!glAgg.has(cid)) glAgg.set(cid, { stuff: 0, loc: 0, pit: 0, p: 0 })
+      const g = glAgg.get(cid)!
+      g.stuff += (r.sp_stuff    as number) * pitches
+      g.loc   += (r.sp_location as number) * pitches
+      g.pit   += (r.sp_pitching as number) * pitches
+      g.p     += pitches
+    }
+    for (const [cid, g] of glAgg) {
+      catcherGradeMap.set(cid, {
+        catcher_stuff_plus:    g.p ? Math.round(g.stuff / g.p) : null,
+        catcher_loc_plus:      g.p ? Math.round(g.loc   / g.p) : null,
+        catcher_pitching_plus: g.p ? Math.round(g.pit   / g.p) : null,
+      })
+    }
+  }
+
   const rows = [...agg.values()]
     .map(r => ({ ...r, ip: outsToIp(r.outs) }))
     .filter(r => r.bf >= minBf && r.ip >= minIp)
-    .map(r => ({ ...r, ...deriveRates(r.hits, r.bb, r.so, r.hr, r.er, r.bf, r.ip, fipConst) }))
+    .map(r => ({
+      ...r,
+      ...deriveRates(r.hits, r.bb, r.so, r.hr, r.er, r.bf, r.ip, fipConst),
+      ...(catcherGradeMap.get(r.catcher_id) ?? { catcher_stuff_plus: null, catcher_loc_plus: null, catcher_pitching_plus: null }),
+    }))
 
   const sorted = sortRows(rows, sort, dir)
   const CATCHER_CSV_COLS = ['catcher_id', 'catcher_name', 'catcher_team', 'bf', 'ip', 'era', 'whip', 'k_pct', 'bb_pct', 'fip', 'hits', 'hr', 'bb', 'so', 'er']

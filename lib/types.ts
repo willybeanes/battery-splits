@@ -41,6 +41,9 @@ export interface CatcherLeaderboardRow {
   bb: number
   so: number
   er: number
+  catcher_stuff_plus: number | null
+  catcher_loc_plus: number | null
+  catcher_pitching_plus: number | null
 }
 
 export interface BatteryRow {
