@@ -80,6 +80,8 @@ function HomeContent() {
   }, [tab, seasons.join(','), team, minBf, minIp, catcher?.mlbam_id, pitcher?.mlbam_id, mode, sortCol, sortDir, page])
 
   useEffect(() => {
+    if (tab === 'games') { setLoading(false); setData(null); return }
+
     let alive = true
 
     const params = new URLSearchParams({
