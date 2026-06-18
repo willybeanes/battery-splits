@@ -14,13 +14,15 @@ function computeFipConst(totals: { hr: number; bb: number; so: number; ip: numbe
   return (tER / ipDec) * 9 - (13 * tHR + 3 * tBB - 2 * tSO) / ipDec
 }
 
+const FG_PROXY = 'https://fg-proxy.vercel.app/api/fg-gamelog'
+
 async function fetchFangraphsStuff(mlbamId: number): Promise<Map<string, { stuff_plus: number | null; location_plus: number | null; pitching_plus: number | null }>> {
   const map = new Map<string, { stuff_plus: number | null; location_plus: number | null; pitching_plus: number | null }>()
   try {
     // Resolve MLBAM → Fangraphs player ID via the "sa{id}" alias
     const infoRes = await fetch(
-      `https://www.fangraphs.com/api/players/player?playerid=sa${mlbamId}`,
-      { headers: { 'User-Agent': 'Mozilla/5.0' }, next: { revalidate: 3600 } }
+      `${FG_PROXY}?path=/api/players/player&playerid=sa${mlbamId}`,
+      { next: { revalidate: 3600 } }
     )
     if (!infoRes.ok) return map
     const info = await infoRes.json()
@@ -29,8 +31,8 @@ async function fetchFangraphsStuff(mlbamId: number): Promise<Map<string, { stuff
 
     // Fetch Stuff+/Location+/Pitching+ game log (type=52)
     const logRes = await fetch(
-      `https://www.fangraphs.com/api/players/game-log?playerid=${fgid}&position=P&type=52&season=2026`,
-      { headers: { 'User-Agent': 'Mozilla/5.0' }, next: { revalidate: 3600 } }
+      `${FG_PROXY}?path=/api/players/game-log&playerid=${fgid}&position=P&type=52&season=2026`,
+      { next: { revalidate: 3600 } }
     )
     if (!logRes.ok) return map
     const log = await logRes.json()
