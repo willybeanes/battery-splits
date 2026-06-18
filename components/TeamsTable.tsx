@@ -75,10 +75,10 @@ function BatteryRow({ entry, kind }: { entry: TeamBatteryEntry; kind: 'best' | '
               {entry.chem_score}
             </span>
             <span className="text-[10px] text-[#bbb]">·</span>
-            <span className="text-[10px] text-[#999]">P FIP</span>
+            <span className="text-[10px] text-[#999]">Overall Pitcher FIP</span>
             <span className="text-xs font-mono text-[#444]">{fmt(entry.pitcher_fip)}</span>
             <span className="text-[10px] text-[#bbb]">·</span>
-            <span className="text-[10px] text-[#999]">B FIP</span>
+            <span className="text-[10px] text-[#999]">Battery FIP</span>
             <span className="text-xs font-mono text-[#444]">{fmt(entry.battery_fip)}</span>
             <span className="text-[10px] text-[#bbb]">·</span>
             <span className="text-[10px] text-[#999]">{fmtIp(entry.ip)} IP</span>
