@@ -174,6 +174,11 @@ export interface GameLogRow {
   stuff_plus: number | null
   location_plus: number | null
   pitching_plus: number | null
+  pitches: number | null
+  strikes: number | null
+  whiffs: number | null
+  strike_pct: number | null
+  whiff_pct: number | null
 }
 
 export interface GameLogResponse {

@@ -45,6 +45,10 @@ export function GamesTable({ rows, loading }: Props) {
             <th className="py-2 px-3 text-right">HR</th>
             <th className="py-2 px-3 text-right">ERA</th>
             <th className="py-2 px-3 text-right">FIP</th>
+            <th className="py-2 px-3 text-right">Pit</th>
+            <th className="py-2 px-3 text-right">Str%</th>
+            <th className="py-2 px-3 text-right">Whiff</th>
+            <th className="py-2 px-3 text-right">Whiff%</th>
             <th className="py-2 px-3 text-right">Stf+</th>
             <th className="py-2 px-3 text-right">Loc+</th>
             <th className="py-2 px-3 text-right">Pit+</th>
@@ -68,6 +72,10 @@ export function GamesTable({ rows, loading }: Props) {
               <td className="py-2 px-3 text-right font-mono text-[#555]">{row.hr}</td>
               <td className="py-2 px-3 text-right font-mono text-[#444]">{fmt(row.era)}</td>
               <td className="py-2 px-3 text-right font-mono text-[#444]">{fmt(row.fip)}</td>
+              <td className="py-2 px-3 text-right font-mono text-[#555]">{row.pitches ?? '—'}</td>
+              <td className="py-2 px-3 text-right font-mono text-[#555]">{row.strike_pct != null ? `${row.strike_pct}%` : '—'}</td>
+              <td className="py-2 px-3 text-right font-mono text-[#555]">{row.whiffs ?? '—'}</td>
+              <td className="py-2 px-3 text-right font-mono text-[#555]">{row.whiff_pct != null ? `${row.whiff_pct}%` : '—'}</td>
               <td className="py-2 px-3 text-right font-mono font-bold" style={{ color: plusColor(row.stuff_plus) }}>{row.stuff_plus ?? '—'}</td>
               <td className="py-2 px-3 text-right font-mono font-bold" style={{ color: plusColor(row.location_plus) }}>{row.location_plus ?? '—'}</td>
               <td className="py-2 px-3 text-right font-mono font-bold" style={{ color: plusColor(row.pitching_plus) }}>{row.pitching_plus ?? '—'}</td>

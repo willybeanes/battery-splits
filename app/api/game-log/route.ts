@@ -28,8 +28,14 @@ function computeFipConst(totals: { hr: number; bb: number; so: number; ip: numbe
 
 const FG_PROXY = 'https://fg-proxy.vercel.app/api/fg-gamelog'
 
-async function fetchFangraphsStuff(mlbamId: number): Promise<Map<string, { stuff_plus: number | null; location_plus: number | null; pitching_plus: number | null }>> {
-  const map = new Map<string, { stuff_plus: number | null; location_plus: number | null; pitching_plus: number | null }>()
+type FgGameData = {
+  stuff_plus: number | null; location_plus: number | null; pitching_plus: number | null
+  pitches: number | null; strikes: number | null; whiffs: number | null
+  strike_pct: number | null; whiff_pct: number | null
+}
+
+async function fetchFangraphsStuff(mlbamId: number): Promise<Map<string, FgGameData>> {
+  const map = new Map<string, FgGameData>()
   try {
     const fgid = getFgId(mlbamId)
     if (!fgid) return map
@@ -49,10 +55,21 @@ async function fetchFangraphsStuff(mlbamId: number): Promise<Map<string, { stuff
       const rawDate = (g['gamedate'] ?? g['Date'] ?? '') as string
       const isoDate = normalizeDate(rawDate)
       if (!isoDate) continue
+      const pitches   = (g['Pitches'] as number) || 0
+      const strikes   = (g['Strikes'] as number) || 0
+      const swstrPct  = (g['SwStr%']  as number) || 0
+      const whiffs    = pitches > 0 ? Math.round(swstrPct * pitches) : null
+      const strikePct = pitches > 0 ? Math.round((strikes / pitches) * 1000) / 10 : null
+      const whiffPct  = pitches > 0 ? Math.round(swstrPct * 1000) / 10 : null
       map.set(isoDate, {
         stuff_plus:    toNum(g['sp_stuff']),
         location_plus: toNum(g['sp_location']),
         pitching_plus: toNum(g['sp_pitching']),
+        pitches: pitches || null,
+        strikes: strikes || null,
+        whiffs,
+        strike_pct: strikePct,
+        whiff_pct:  whiffPct,
       })
     }
   } catch {
@@ -107,7 +124,7 @@ export async function GET(req: NextRequest) {
     const fip   = ipDec > 0
       ? Math.round(((13 * (r.hr ?? 0) + 3 * (r.bb ?? 0) - 2 * (r.so ?? 0)) / ipDec + fipConst) * 100) / 100
       : null
-    const stuff = stuffByDate.get(r.game_date as string) ?? { stuff_plus: null, location_plus: null, pitching_plus: null }
+    const stuff = stuffByDate.get(r.game_date as string) ?? { stuff_plus: null, location_plus: null, pitching_plus: null, pitches: null, strikes: null, whiffs: null, strike_pct: null, whiff_pct: null }
     return { ...r, fip, ...stuff }
   })
 
