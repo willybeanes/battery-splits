@@ -4,6 +4,19 @@ import Image from 'next/image'
 import { TeamChemRow, TeamBatteryEntry } from '@/lib/types'
 import { fmtIp, fmt } from '@/lib/stats'
 
+const TEAM_NAMES: Record<string, string> = {
+  AZ: 'Arizona Diamondbacks', ATL: 'Atlanta Braves', BAL: 'Baltimore Orioles',
+  BOS: 'Boston Red Sox', CHC: 'Chicago Cubs', CWS: 'Chicago White Sox',
+  CIN: 'Cincinnati Reds', CLE: 'Cleveland Guardians', COL: 'Colorado Rockies',
+  DET: 'Detroit Tigers', HOU: 'Houston Astros', KC: 'Kansas City Royals',
+  LAA: 'Los Angeles Angels', LAD: 'Los Angeles Dodgers', MIA: 'Miami Marlins',
+  MIL: 'Milwaukee Brewers', MIN: 'Minnesota Twins', NYM: 'New York Mets',
+  NYY: 'New York Yankees', ATH: 'Oakland Athletics', PHI: 'Philadelphia Phillies',
+  PIT: 'Pittsburgh Pirates', SD: 'San Diego Padres', SF: 'San Francisco Giants',
+  SEA: 'Seattle Mariners', STL: 'St. Louis Cardinals', TB: 'Tampa Bay Rays',
+  TEX: 'Texas Rangers', TOR: 'Toronto Blue Jays', WSH: 'Washington Nationals',
+}
+
 // Team abbreviation → MLB team ID for logo URLs
 const TEAM_IDS: Record<string, number> = {
   ARI: 109, AZ: 109, ATL: 144, BAL: 110, BOS: 111, CHC: 112, CHW: 145, CWS: 145,
@@ -114,7 +127,7 @@ function TeamCard({ row }: { row: TeamChemRow }) {
         ) : (
           <div className="w-8 h-8 rounded-full bg-[#e8e4de] shrink-0" />
         )}
-        <span className="text-sm font-black tracking-tight text-[#1a1a1a]">{row.team}</span>
+        <span className="text-sm font-black tracking-tight text-[#1a1a1a]">{TEAM_NAMES[row.team] ?? row.team}</span>
       </div>
 
       {/* Batteries */}
