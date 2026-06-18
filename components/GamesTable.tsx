@@ -3,6 +3,15 @@
 import { GameLogRow } from '@/lib/types'
 import { fmt, fmtIp } from '@/lib/stats'
 
+function plusColor(val: number | null): string {
+  if (val === null) return '#999'
+  if (val >= 115) return '#0a7a52'
+  if (val >= 105) return '#2a9d6a'
+  if (val >= 95)  return '#888'
+  if (val >= 85)  return '#c0392b'
+  return '#8b0000'
+}
+
 function fmtDate(dateStr: string): string {
   if (!dateStr) return '—'
   const d = new Date(dateStr + 'T12:00:00')
@@ -59,9 +68,9 @@ export function GamesTable({ rows, loading }: Props) {
               <td className="py-2 px-3 text-right font-mono text-[#555]">{row.hr}</td>
               <td className="py-2 px-3 text-right font-mono text-[#444]">{fmt(row.era)}</td>
               <td className="py-2 px-3 text-right font-mono text-[#444]">{fmt(row.fip)}</td>
-              <td className="py-2 px-3 text-right font-mono text-[#444]">{row.stuff_plus ?? '—'}</td>
-              <td className="py-2 px-3 text-right font-mono text-[#444]">{row.location_plus ?? '—'}</td>
-              <td className="py-2 px-3 text-right font-mono text-[#444]">{row.pitching_plus ?? '—'}</td>
+              <td className="py-2 px-3 text-right font-mono font-bold" style={{ color: plusColor(row.stuff_plus) }}>{row.stuff_plus ?? '—'}</td>
+              <td className="py-2 px-3 text-right font-mono font-bold" style={{ color: plusColor(row.location_plus) }}>{row.location_plus ?? '—'}</td>
+              <td className="py-2 px-3 text-right font-mono font-bold" style={{ color: plusColor(row.pitching_plus) }}>{row.pitching_plus ?? '—'}</td>
             </tr>
           ))}
         </tbody>
