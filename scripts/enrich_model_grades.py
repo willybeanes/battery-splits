@@ -61,9 +61,55 @@ def build_date_map(games: list[dict]) -> dict[str, dict]:
     return result
 
 
+def mlbam_lookup_fallback(mlbam_id: int) -> dict | None:
+    """Look up a player via MLB Stats API + Fangraphs playerSearch when not in local map."""
+    try:
+        r = requests.get(
+            f"https://statsapi.mlb.com/api/v1/people/{mlbam_id}?fields=people,fullName,firstName,lastName",
+            timeout=10,
+        )
+        r.raise_for_status()
+        person = r.json()["people"][0]
+        first = person.get("firstName", "")
+        last  = person.get("lastName", "")
+        full  = person.get("fullName", f"{first} {last}").strip()
+    except Exception as e:
+        print(f"    MLB API lookup failed for {mlbam_id}: {e}")
+        return None
+
+    # Search Fangraphs via fg-proxy
+    try:
+        sr = requests.get(
+            f"{FG_PROXY}?path=/api/players/playerSearch&playerName={requests.utils.quote(last)}&position=P",
+            timeout=15,
+        )
+        sr.raise_for_status()
+        results = sr.json() or []
+        for p in results:
+            if str(p.get("playerid", "")).isdigit() and (
+                p.get("Name", "").lower() == full.lower()
+                or (last.lower() in p.get("Name", "").lower() and first.lower() in p.get("Name", "").lower())
+            ):
+                fgid = int(p["playerid"])
+                entry = {"fg": fgid, "first": first, "last": last}
+                MLBAM_TO_FG[str(mlbam_id)] = entry
+                # Persist to map file
+                with open(MAP_PATH, "w") as f:
+                    json.dump(MLBAM_TO_FG, f)
+                print(f"    Resolved via fallback: {full} → fgid={fgid} (cached)")
+                return entry
+    except Exception as e:
+        print(f"    Fangraphs playerSearch failed for {full}: {e}")
+
+    print(f"    Could not resolve fgid for {full} ({mlbam_id})")
+    return None
+
+
 def enrich_pitcher(db, mlbam_id: int) -> int:
     """Fetch grades for one pitcher and update all their 2026 game log rows. Returns rows updated."""
     entry = MLBAM_TO_FG.get(str(mlbam_id))
+    if not entry:
+        entry = mlbam_lookup_fallback(mlbam_id)
     if not entry:
         print(f"  {mlbam_id}: not in mlbam-fg-map, skipping")
         return 0
