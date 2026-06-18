@@ -199,7 +199,7 @@ function HomeContent() {
           <div className="px-5 pt-4 pb-3 border-b border-[#ece8e1] flex flex-col gap-3">
             {/* Row 1: season / team / thresholds + search toggle */}
             <div className="flex flex-wrap items-center gap-4">
-              <SeasonToggle value={seasons} onChange={handleSeasonsChange} />
+              {tab !== 'teams' && <SeasonToggle value={seasons} onChange={handleSeasonsChange} />}
               <div className="w-px h-5 bg-[#e0dbd2] hidden sm:block" />
               {tab !== 'teams' && <TeamFilter value={team} onChange={t => { setTeam(t); setPage(1) }} />}
               {tab !== 'teams' && <MinBfFilter value={minBf} onChange={n => { setMinBf(n); setPage(1) }} />}
