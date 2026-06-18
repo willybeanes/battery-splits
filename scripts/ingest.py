@@ -1037,34 +1037,46 @@ def aggregate_game_logs(all_pas: list[dict], all_names: dict[int, str], season: 
         s["outs"] += p.get("outs", 0)
         s["er"]   += p.get("runs", 0)
 
-    # For each (game, pitcher), keep only the catcher with most BF
-    best: dict[tuple, dict] = {}
-    for (gk, pid, _cid), s in index.items():
+    # For each (game, pitcher): find primary catcher (most BF), sum all stats
+    primary: dict[tuple, dict] = {}   # (gk, pid) → catcher_id/bf of primary catcher
+    totals:  dict[tuple, dict] = {}   # (gk, pid) → summed game stats
+
+    for (gk, pid, cid), s in index.items():
         key2 = (gk, pid)
-        if key2 not in best or s["bf"] > best[key2]["bf"]:
-            best[key2] = s
+        if key2 not in primary or s["bf"] > primary[key2]["bf"]:
+            primary[key2] = {"catcher_id": cid, "bf": s["bf"],
+                             "game_pk": s["game_pk"], "game_date": s["game_date"],
+                             "season": s["season"], "pitcher_id": pid,
+                             "pitcher_team": s["pitcher_team"],
+                             "opponent_team": s["opponent_team"]}
+        if key2 not in totals:
+            totals[key2] = {"bf": 0, "outs": 0, "hits": 0, "hr": 0, "bb": 0, "so": 0, "er": 0}
+        t = totals[key2]
+        for c in ("bf", "outs", "hits", "hr", "bb", "so", "er"):
+            t[c] += s[c]
 
     rows = []
-    for s in best.values():
-        ip_dec = s["outs"] / 3
-        era = round((s["er"] / ip_dec) * 9, 2) if ip_dec else None
+    for key2, p in primary.items():
+        t      = totals[key2]
+        ip_dec = t["outs"] / 3
+        era    = round((t["er"] / ip_dec) * 9, 2) if ip_dec else None
         rows.append({
-            "season":        s["season"],
-            "game_pk":       s["game_pk"],
-            "game_date":     s["game_date"],
-            "pitcher_id":    s["pitcher_id"],
-            "pitcher_name":  all_names.get(s["pitcher_id"], f"Player {s['pitcher_id']}"),
-            "pitcher_team":  s["pitcher_team"],
-            "opponent_team": s["opponent_team"],
-            "catcher_id":    s["catcher_id"],
-            "catcher_name":  all_names.get(s["catcher_id"], f"Catcher {s['catcher_id']}"),
-            "bf":   s["bf"],
-            "ip":   outs_to_ip(s["outs"]),
-            "hits": s["hits"],
-            "hr":   s["hr"],
-            "bb":   s["bb"],
-            "so":   s["so"],
-            "er":   s["er"],
+            "season":        p["season"],
+            "game_pk":       p["game_pk"],
+            "game_date":     p["game_date"],
+            "pitcher_id":    p["pitcher_id"],
+            "pitcher_name":  all_names.get(p["pitcher_id"], f"Player {p['pitcher_id']}"),
+            "pitcher_team":  p["pitcher_team"],
+            "opponent_team": p["opponent_team"],
+            "catcher_id":    p["catcher_id"],
+            "catcher_name":  all_names.get(p["catcher_id"], f"Catcher {p['catcher_id']}"),
+            "bf":   t["bf"],
+            "ip":   outs_to_ip(t["outs"]),
+            "hits": t["hits"],
+            "hr":   t["hr"],
+            "bb":   t["bb"],
+            "so":   t["so"],
+            "er":   t["er"],
             "era":  era,
             "fip":  None,  # filled after FIP constant is known
         })
