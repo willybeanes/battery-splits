@@ -310,7 +310,7 @@ function HomeContent() {
         </div>
 
         <p className="text-xs text-[#aaa] text-center pb-4">
-          Data via Baseball Savant · Updated nightly via GitHub Actions
+          Data via Baseball Savant
         </p>
       </div>
     </main>
