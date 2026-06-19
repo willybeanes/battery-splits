@@ -44,11 +44,21 @@ def fetch_fg_gamelog(fgid: int) -> list[dict]:
         return []
 
 
+def _parse_fg_date(raw: str) -> str:
+    """Extract YYYY-MM-DD from Fangraphs Date field (HTML anchor or plain string)."""
+    import re
+    m = re.search(r'date=(\d{4}-\d{2}-\d{2})', raw)
+    if m:
+        return m.group(1)
+    m = re.search(r'\d{4}-\d{2}-\d{2}', raw)
+    return m.group(0) if m else ""
+
+
 def build_date_map(games: list[dict]) -> dict[str, dict]:
     """Build gamedate → model grades map from Fangraphs game list."""
     result = {}
     for g in games:
-        date = g.get("gamedate", "")
+        date = _parse_fg_date(str(g.get("Date") or g.get("gamedate") or ""))
         if not date:
             continue
         pitches = int(g.get("Pitches") or 0)
