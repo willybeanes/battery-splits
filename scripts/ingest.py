@@ -838,7 +838,7 @@ def process_mlb_game(game_pk: int, game_date: str = "") -> tuple[list[dict], dic
             desc    = det.get("description", "").lower()
             new_pid = pe.get("player", {}).get("id")
             if ev_type in ("defensive_switch", "defensive_substitution") \
-               and new_pid and "catcher" in desc:
+               and new_pid and "playing catcher" in desc:
                 tid = player_tid.get(new_pid)
                 if tid is not None:
                     current_catcher[tid] = new_pid
