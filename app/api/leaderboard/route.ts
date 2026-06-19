@@ -42,6 +42,7 @@ function outsToIp(outs: number): number {
 
 type DB = ReturnType<typeof createServiceClient>
 
+
 // Paginate all rows from pitcher_catcher_stats matching the given seasons + catcher_id filter
 async function fetchStatRows(
   db: DB,
@@ -296,10 +297,17 @@ async function handleCatcherTab(
   // Catcher-level model grades — pitch-weighted avg from game logs (2026 only)
   const catcherGradeMap = new Map<number, { catcher_stuff_plus: number | null; catcher_loc_plus: number | null; catcher_pitching_plus: number | null }>()
   if (seasons.includes(2026)) {
-    const { data: glRows } = await db.from('pitcher_game_logs')
-      .select('catcher_id,sp_stuff,sp_location,sp_pitching,pitches_fg')
-      .eq('season', 2026)
-      .not('sp_location', 'is', null)
+    const glRows: { catcher_id: unknown; sp_stuff: unknown; sp_location: unknown; sp_pitching: unknown; pitches_fg: unknown }[] = []
+    for (let offset = 0; ; offset += 1000) {
+      const { data } = await db.from('pitcher_game_logs')
+        .select('catcher_id,sp_stuff,sp_location,sp_pitching,pitches_fg')
+        .eq('season', 2026)
+        .not('sp_location', 'is', null)
+        .range(offset, offset + 999)
+      if (!data || data.length === 0) break
+      glRows.push(...data)
+      if (data.length < 1000) break
+    }
     type GlAcc = { stuff: number; loc: number; pit: number; p: number }
     const glAgg = new Map<number, GlAcc>()
     for (const r of glRows ?? []) {
@@ -406,10 +414,17 @@ async function handleBatteryTab(
   // Battery-level model grades — pitch-weighted avg from game logs (2026 only)
   const modelGradeMap = new Map<string, { battery_stuff_plus: number | null; battery_loc_plus: number | null; battery_pitching_plus: number | null }>()
   if (seasons.includes(2026)) {
-    const { data: glRows } = await db.from('pitcher_game_logs')
-      .select('pitcher_id,catcher_id,sp_stuff,sp_location,sp_pitching,pitches_fg')
-      .eq('season', 2026)
-      .not('sp_location', 'is', null)
+    const glRows: { pitcher_id: unknown; catcher_id: unknown; sp_stuff: unknown; sp_location: unknown; sp_pitching: unknown; pitches_fg: unknown }[] = []
+    for (let offset = 0; ; offset += 1000) {
+      const { data } = await db.from('pitcher_game_logs')
+        .select('pitcher_id,catcher_id,sp_stuff,sp_location,sp_pitching,pitches_fg')
+        .eq('season', 2026)
+        .not('sp_location', 'is', null)
+        .range(offset, offset + 999)
+      if (!data || data.length === 0) break
+      glRows.push(...data)
+      if (data.length < 1000) break
+    }
     type GlAcc = { stuff: number; loc: number; pit: number; p: number }
     const glAgg = new Map<string, GlAcc>()
     for (const r of glRows ?? []) {
