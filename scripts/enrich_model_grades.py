@@ -147,9 +147,18 @@ def main():
     if len(sys.argv) > 1:
         mlbam_ids = [int(a) for a in sys.argv[1:] if a.isdigit()]
     else:
-        # All unique pitcher IDs in 2026 game logs
-        res = db.table("pitcher_game_logs").select("pitcher_id").eq("season", 2026).execute()
-        mlbam_ids = list({r["pitcher_id"] for r in (res.data or [])})
+        # All unique pitcher IDs in 2026 game logs (paginate past Supabase 1000-row limit)
+        all_rows: list[dict] = []
+        offset = 0
+        page_size = 1000
+        while True:
+            res = db.table("pitcher_game_logs").select("pitcher_id").eq("season", 2026).range(offset, offset + page_size - 1).execute()
+            batch = res.data or []
+            all_rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            offset += page_size
+        mlbam_ids = list({r["pitcher_id"] for r in all_rows})
         print(f"Found {len(mlbam_ids)} pitchers in 2026 game logs")
 
     total_updated = 0
