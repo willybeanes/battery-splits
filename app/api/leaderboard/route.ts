@@ -387,8 +387,7 @@ async function handleBatteryTab(
     if (t.fip != null) pitcherFipMap.set(t.pitcher_id, t.fip)
   }
 
-  // Use lower IP threshold for current (in-progress) season
-  const chemIpMin = seasons.includes(2026) ? 20 : 50
+  const chemIpMin = 20
 
   // Normalize diffs across all qualifying combos
   let chemMean = 0, chemStd = 1
