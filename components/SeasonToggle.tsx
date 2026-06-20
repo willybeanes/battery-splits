@@ -7,6 +7,7 @@ const SEASONS = Array.from({ length: 19 }, (_, i) => 2026 - i) // 2026 down to 2
 interface Props {
   value: number[]
   onChange: (seasons: number[]) => void
+  singleSelect?: boolean
 }
 
 function label(seasons: number[]): string {
@@ -18,7 +19,7 @@ function label(seasons: number[]): string {
   return `${seasons.length} Seasons`
 }
 
-export function SeasonToggle({ value, onChange }: Props) {
+export function SeasonToggle({ value, onChange, singleSelect = false }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
@@ -31,6 +32,11 @@ export function SeasonToggle({ value, onChange }: Props) {
   }, [])
 
   function toggle(season: number) {
+    if (singleSelect) {
+      onChange([season])
+      setOpen(false)
+      return
+    }
     if (value.includes(season)) {
       if (value.length === 1) return // keep at least one selected
       onChange(value.filter(s => s !== season))
@@ -60,7 +66,7 @@ export function SeasonToggle({ value, onChange }: Props) {
               return (
                 <label key={s} className="flex items-center gap-2.5 px-3 py-1.5 text-sm cursor-pointer hover:bg-[#f5f2ed] transition-colors select-none">
                   <input
-                    type="checkbox"
+                    type={singleSelect ? 'radio' : 'checkbox'}
                     checked={checked}
                     onChange={() => toggle(s)}
                     className="accent-[#1a1a1a] w-3.5 h-3.5"
