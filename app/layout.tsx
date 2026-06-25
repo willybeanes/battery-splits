@@ -15,7 +15,7 @@ const dmMono = DM_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Battery Splits",
+  title: "Stuff Splits",
   description: "MLB pitcher leaderboard with catcher presence filter",
 };
 

@@ -40,3 +40,7 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 scripts/cache/
+
+# ML pipeline — large data files not needed for deployment (models ARE committed)
+pitch-quality-model/data/
+pitch-quality-model/__pycache__/

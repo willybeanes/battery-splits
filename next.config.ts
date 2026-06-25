@@ -8,6 +8,11 @@ const nextConfig: NextConfig = {
       { protocol: 'https', hostname: 'img.mlbstatic.com' },
     ],
   },
+  async redirects() {
+    return [
+      { source: '/', destination: '/platoon', permanent: false },
+    ]
+  },
 };
 
 export default nextConfig;

@@ -200,7 +200,9 @@ function HomeContent() {
 
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-black tracking-tight text-[#1a1a1a]">Battery Splits</h1>
+          <div className="flex items-baseline gap-4">
+            <h1 className="text-3xl font-black tracking-tight text-[#1a1a1a]">Stuff Splits</h1>
+          </div>
           <p className="text-sm text-[#666] mt-1">
             MLB pitcher leaderboard with catcher presence filter — powered by Retrosheet
           </p>

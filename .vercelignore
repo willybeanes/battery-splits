@@ -1,0 +1,12 @@
+# Python model pipeline — not needed for Next.js deployment
+pitch-quality-model/
+
+# Large data exports (served from Supabase, not Vercel)
+data/
+
+# Python cache and large script data
+scripts/cache/
+scripts/__pycache__/
+
+# Dependencies (Vercel builds these fresh)
+node_modules/
