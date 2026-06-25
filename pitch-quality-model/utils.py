@@ -108,7 +108,7 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
         (df["plate_x"].abs() <= 0.83) &
         (df["plate_z"] >= df["sz_bot"]) &
         (df["plate_z"] <= df["sz_top"])
-    ).astype(int)
+    ).fillna(False).astype(int)
 
     # ── Velocity differential vs pitcher's own fastball ──────────────────────
     # Per-pitcher mean velocity of FF/SI pitches. Falls back to overall mean.
