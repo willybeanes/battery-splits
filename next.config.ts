@@ -9,9 +9,10 @@ const nextConfig: NextConfig = {
     ],
   },
   async redirects() {
-    return [
-      { source: '/', destination: '/platoon', permanent: false },
-    ]
+    if (process.env.NEXT_PUBLIC_SITE_NAME === 'Stuff Splits') {
+      return [{ source: '/', destination: '/platoon', permanent: false }]
+    }
+    return []
   },
 };
 
