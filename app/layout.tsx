@@ -15,7 +15,7 @@ const dmMono = DM_Mono({
 });
 
 export const metadata: Metadata = {
-  title: process.env.NEXT_PUBLIC_SITE_NAME ?? "Battery Splits",
+  title: "Battery Splits",
   description: "MLB pitcher leaderboard with catcher presence filter",
 };
 
