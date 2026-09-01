@@ -3,7 +3,7 @@
     {
       "source": "/(.*)",
       "destination": "https://baseball-hopper.vercel.app/battery",
-      "permanent": true
+      "permanent": false
     }
   ]
 }
