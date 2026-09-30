@@ -2,7 +2,7 @@ name: Ingest Statcast Data
 
 on:
   schedule:
-    - cron: '0 8 * * *'   # daily at 8am UTC (3am CT)
+    - cron: '0 8 * 3-10 *'   # daily at 8am UTC (3am CT)
   workflow_dispatch:        # allow manual trigger from GitHub UI
 
 jobs:
